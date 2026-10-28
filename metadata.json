@@ -1,0 +1,6 @@
+{
+  "name": "Daycraft - Offline Life Management",
+  "description": "Private, offline-first personal operating system for Android and Windows connecting habits, tasks, projects, goals, wellness, journal, calendar, and local AI.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

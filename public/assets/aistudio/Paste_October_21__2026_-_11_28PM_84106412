@@ -1,0 +1,1665 @@
+# MASTER BUILD PROMPT — DAYCRAFT
+## A Private, Offline-First Personal Life Management System for Android and Windows
+
+Act as a principal software architect, senior full-stack engineer, native application engineer, offline AI engineer, product designer, accessibility specialist, and QA engineer.
+
+Your mission is to design, implement, test, and prepare for release a complete personal productivity application with the working title **Daycraft**. The product name must be configurable and easy to change globally.
+
+This is a real software engineering project, not a UI mockup, landing page, or prototype. Implement working features, persistent storage, actual application logic, error handling, platform integrations, and automated tests.
+
+Do not stop after producing a plan or a visually impressive dashboard. Build the application in verifiable stages, preserve working code, validate integrations, and continue until the required deliverables are complete or a specific environment limitation prevents completion.
+
+---
+
+# 1. PRODUCT VISION
+
+Build a personal life-management system for one user that connects:
+
+- Habits and routines
+- Tasks and to-do lists
+- Projects and subtasks
+- Goals and milestones
+- Personal work management
+- Study planning and learning sessions
+- Wellness tracking
+- Daily journaling and reflection
+- Calendar and time-blocking
+- Focus sessions and Pomodoro timers
+- Productivity analytics
+- Achievements, XP, and streaks
+- A private, offline AI assistant
+
+The application should feel like a thoughtfully designed personal operating system, not an enterprise dashboard or a gamified children's app.
+
+## Core product principles
+
+1. Privacy by default.
+2. Offline functionality as a first-class requirement.
+3. Reliable data over decorative features.
+4. Useful AI without compromising privacy.
+5. Calm, expressive, comfortable visual design.
+6. User control without unnecessary complexity.
+7. Honest analytics and forgiving habit tracking.
+8. Native platform functionality where it matters.
+9. No forced accounts, subscriptions, cloud storage, or online AI services.
+10. No fake functionality, simulated integrations, or buttons that do nothing.
+
+The application must work without an internet connection after installation and any optional AI model downloads have completed.
+
+## Target platforms
+
+- Android: installable native Android application, preferably delivered as a signed APK for testing and an Android App Bundle when release preparation is appropriate.
+- Windows: installable native Windows desktop application, with an appropriate distributable installer or executable package.
+
+Use one shared application codebase wherever practical, with platform-specific implementations for notifications, storage, app locking, file access, and AI inference.
+
+The two installations maintain independent local data. Do not implement cloud synchronization.
+
+---
+
+# 2. REQUIRED TECHNICAL ARCHITECTURE
+
+## 2.1 Architecture selection
+
+Use the following default architecture unless a dependency or platform constraint is demonstrated to make it unsuitable.
+
+### Shared application layer
+
+- React
+- TypeScript in strict mode
+- Vite
+- A maintained routing library
+- A maintained state management solution or lightweight context/store architecture
+- A reusable component library built specifically for this product
+- CSS variables or design tokens for themes
+- Zod or an equivalent maintained schema validation library
+- A reliable date/time library where native JavaScript date handling is insufficient
+
+### Platform shells
+
+Use a shared React/TypeScript frontend with:
+
+- Capacitor for the Android application.
+- Tauri 2 for the Windows desktop application.
+
+Use a clean platform-adapter architecture. Do not assume that a browser API, Capacitor plugin, or Tauri plugin works identically across both platforms.
+
+Keep platform-specific capabilities behind explicit interfaces such as:
+
+- `DatabaseAdapter`
+- `NotificationAdapter`
+- `SecureStorageAdapter`
+- `FileSystemAdapter`
+- `LocalAIAdapter`
+- `DeviceCapabilitiesAdapter`
+- `AudioAdapter`
+
+Implement real platform-specific adapters for each required capability.
+
+If the chosen combination of Capacitor and Tauri causes unacceptable duplication or incompatibility, explain the issue and propose the smallest reliable architecture change before proceeding. Do not silently switch to a browser-only PWA.
+
+### Local persistence
+
+Use SQLite as the primary structured data store, accessed through maintained platform-appropriate integrations.
+
+Requirements:
+
+- A versioned database schema.
+- Forward migrations.
+- Transaction-safe writes.
+- Prepared statements or parameterized queries.
+- Indexed columns for frequent queries.
+- Foreign-key integrity where supported.
+- A repository layer separating UI code from SQL.
+- A database initialization and recovery flow.
+- Schema migration tests.
+- No remote database dependency.
+
+Do not store the complete database as one JSON blob in browser local storage.
+
+Local settings may use appropriate platform storage, but all important user-created records must be persisted in SQLite or an explicitly designed local file store.
+
+Use a common repository interface so both platform implementations expose consistent behavior.
+
+## 2.2 Dependency policy
+
+Before generating platform-specific integrations:
+
+1. Inspect the current project structure.
+2. Identify the installed framework versions.
+3. Check official documentation for current plugin APIs and compatibility.
+4. Prefer maintained, compatible dependencies.
+5. Pin or lock dependency versions.
+6. Do not invent plugin names, methods, permissions, or APIs.
+7. Do not replace working dependencies without a clear reason.
+8. Do not use deprecated APIs when a maintained alternative exists.
+
+If documentation access is unavailable, state what cannot be verified and avoid presenting an untested API as confirmed.
+
+---
+
+# 3. PRIVACY AND SECURITY REQUIREMENTS
+
+Privacy is an architectural constraint, not a settings-page slogan.
+
+## 3.1 Prohibited default dependencies
+
+The application must not depend on:
+
+- Firebase or Supabase for user data.
+- Remote authentication.
+- Cloud-hosted databases.
+- Cloud AI inference.
+- Third-party analytics or telemetry.
+- Advertising SDKs.
+- Remote logging services.
+- Background uploads of personal records.
+- Internet connectivity for ordinary task, habit, calendar, journal, or analytics operations.
+
+Do not introduce these dependencies unless the user explicitly changes the product requirements in a future version.
+
+## 3.2 Network policy
+
+Normal application operation must work offline.
+
+Network access may be used only for explicit, documented functions such as:
+
+- Downloading a selected AI model.
+- Optional model updates.
+- Explicitly initiated software updates, if implemented.
+
+All downloads must be initiated or approved by the user, with a clear explanation of their size and purpose.
+
+After setup, all personal-data processing and AI inference must happen locally.
+
+Never upload journal entries, task descriptions, habits, analytics, database contents, or AI prompts.
+
+The application must not silently use a remote model when its local model is unavailable.
+
+## 3.3 Optional app lock
+
+Provide an app-lock setting that is disabled by default.
+
+When enabled, offer a PIN and native device authentication where supported.
+
+Requirements:
+
+- Do not store a PIN in plaintext.
+- Use a suitable salted password-hashing algorithm for PIN verification.
+- Use native secure storage for protected secrets.
+- Rate-limit failed unlock attempts.
+- Provide a recovery policy that explains the consequences of forgotten credentials.
+- Allow the user to disable the lock after successful authentication.
+- Protect sensitive previews when practical.
+- Do not promise encryption of the entire database unless actual database encryption has been implemented and verified.
+
+App lock and database encryption are separate security controls. Explain that distinction in settings.
+
+## 3.4 Local backups
+
+Support:
+
+- Manual backup.
+- Automatic local backup to a user-selected destination where the platform permits it.
+- Manual restore.
+- Data export and import.
+- Backup integrity validation.
+- Backup format versioning.
+- Clear overwrite and merge warnings.
+- Recovery from incomplete imports.
+
+Use an archive format containing a versioned manifest, database backup, and any necessary local attachments.
+
+Use SQLite's supported backup mechanism or an equivalent transaction-safe process. Do not copy a live database file in a way that can corrupt a backup.
+
+Validate backup integrity before restoring.
+
+Automatic backups must remain local. Never upload backups to a remote service.
+
+Warn the user before replacing existing data.
+
+Because the devices are independent, importing data must never create an implicit live-sync relationship.
+
+---
+
+# 4. DESIGN SYSTEM AND VISUAL EXPERIENCE
+
+Create a distinctive, premium visual identity. Avoid generic blue SaaS dashboards and default template styling.
+
+## 4.1 Aesthetic direction
+
+The design should combine:
+
+- Warm, comfortable surfaces.
+- Carefully balanced contrast.
+- Colorful but restrained accents.
+- Elegant typography.
+- Generous spacing.
+- Expressive micro-interactions.
+- Subtle depth and shadows.
+- Beautiful charts and progress indicators.
+- Rounded but not excessively pill-shaped components.
+
+Support both light and dark themes.
+
+Include several polished presets, for example:
+
+1. Warm Paper — cream, charcoal, muted terracotta.
+2. Midnight — deep neutral surfaces with carefully controlled accent colors.
+3. Sage Garden — muted greens and warm natural neutrals.
+4. Lavender Haze — soft violet accents and balanced neutral surfaces.
+5. Sunset — warm coral, amber, and muted plum.
+6. Monochrome — grayscale with a single configurable accent.
+
+These names and palettes are initial design directions, not mandatory branding. Refine them into a coherent design system.
+
+Every theme must preserve readability, status contrast, and accessibility.
+
+## 4.2 Theme engine
+
+Implement a centralized theme system using design tokens for:
+
+- Backgrounds.
+- Surface elevations.
+- Primary and secondary text.
+- Borders and dividers.
+- Accent colors.
+- Success, warning, and error states.
+- Charts.
+- Focus rings.
+- Shadows.
+- Corner radii.
+- Spacing.
+- Typography.
+- Motion duration.
+
+Allow switching between light and dark variants.
+
+Persist theme preferences locally and apply them immediately without reloading the application.
+
+Support system-theme detection as an optional preference.
+
+The theme must update every screen, dialog, notification component, chart, and settings page consistently.
+
+## 4.3 Responsive layout
+
+Windows:
+
+- Persistent sidebar.
+- Main content region.
+- Optional contextual side panel.
+- Keyboard-accessible navigation.
+- Resizable layouts.
+- Efficient use of wide screens.
+
+Android:
+
+- Touch-friendly navigation.
+- Bottom navigation or an equivalent suitable mobile pattern.
+- Compact task cards.
+- Mobile-first forms.
+- Bottom sheets where appropriate.
+- Safe-area support.
+- Large enough touch targets.
+- No horizontal overflow.
+
+Create adaptive layouts rather than simply scaling the desktop UI down.
+
+## 4.4 Accessibility
+
+Implement:
+
+- Semantic controls.
+- Keyboard navigation.
+- Visible focus indicators.
+- Screen-reader labels.
+- Accessible chart descriptions.
+- Reduced-motion support.
+- Sufficient color contrast.
+- Configurable text scaling where feasible.
+- Clear empty, loading, error, and success states.
+
+Never use color as the sole indicator of status.
+
+---
+
+# 5. NAVIGATION AND APPLICATION SHELL
+
+Create a coherent application shell with the following destinations:
+
+1. Home
+2. My Day
+3. Inbox
+4. Tasks
+5. Habits
+6. Projects
+7. Goals
+8. Calendar
+9. Focus
+10. Study
+11. Wellness
+12. Journal
+13. Insights
+14. AI Companion
+15. Settings
+
+Do not force all destinations to occupy the same navigation bar. Use sensible grouping, overflow navigation, and platform-specific layouts.
+
+Provide a universal quick-add action accessible from the major screens.
+
+Quick-add must support creating:
+
+- A task.
+- A habit.
+- A project.
+- A goal.
+- A journal entry.
+- A calendar event.
+- A focus session.
+
+Implement global search across locally stored records, with filters for record type, date, project, tags, and status.
+
+Search must run locally and remain available offline.
+
+---
+
+# 6. HOME DASHBOARD AND MY DAY
+
+## Home dashboard
+
+Create a configurable dashboard with widgets such as:
+
+- Today's priorities.
+- Upcoming tasks.
+- Habit checklist.
+- Daily completion progress.
+- Active projects.
+- Goal progress.
+- Next calendar event.
+- Focus session launcher.
+- Recent journal entry.
+- Weekly progress summary.
+- AI-generated insights, when local AI is available.
+
+Let the user show, hide, and reorder supported widgets.
+
+Persist dashboard preferences locally.
+
+## My Day
+
+Provide a focused view of the current day containing:
+
+- Date and personalized greeting.
+- Today's scheduled events.
+- Tasks due today.
+- Overdue tasks, clearly separated.
+- Today's habits.
+- Active time blocks.
+- Focus sessions.
+- Daily priorities.
+- Progress summary.
+
+Allow the user to move tasks into another date without deleting their history.
+
+Do not silently mark overdue tasks as completed or reset them.
+
+## Inbox
+
+Provide a quick-capture inbox for unsorted tasks, ideas, and reminders.
+
+Support:
+
+- Rapid entry.
+- Optional natural-language capture.
+- Later classification into projects, dates, and tags.
+- Batch organization.
+- Search and filtering.
+
+All captured data must be saved locally.
+
+---
+
+# 7. TASK AND PROJECT MANAGEMENT
+
+Implement a complete task-management engine.
+
+## 7.1 Task fields
+
+Support:
+
+- Unique ID.
+- Title.
+- Description.
+- Creation timestamp.
+- Last-modified timestamp.
+- Status.
+- Priority.
+- Start date.
+- Due date.
+- Optional scheduled time.
+- Estimated duration.
+- Actual tracked duration.
+- Project relationship.
+- Parent task relationship.
+- Tags.
+- Recurrence rule.
+- Optional reminder.
+- Completion timestamp.
+- Archive status.
+
+Validate required fields and dates.
+
+Support tasks without deadlines.
+
+## 7.2 Task operations
+
+Implement:
+
+- Create.
+- Read.
+- Update.
+- Complete.
+- Reopen.
+- Archive.
+- Delete with confirmation.
+- Undo for reversible actions where practical.
+- Bulk actions.
+- Sorting.
+- Filtering.
+- Search.
+- Duplicate task.
+- Subtask creation.
+- Task detail view.
+
+Changes must persist after restarting the application.
+
+## 7.3 Projects
+
+Support:
+
+- Project name and description.
+- Project color or icon.
+- Start and target dates.
+- Status.
+- Linked tasks.
+- Progress percentage.
+- Milestones.
+- Project notes.
+- Archive functionality.
+
+Provide a project overview and a dedicated project task view.
+
+Calculate progress using an explicit, documented rule, such as completed eligible tasks divided by total eligible tasks. Handle projects with no tasks without division-by-zero errors.
+
+## 7.4 Task dependencies
+
+Allow a task to depend on another task.
+
+Prevent invalid self-dependencies and circular dependency chains.
+
+Show blocked tasks clearly.
+
+Do not automatically reschedule dependent tasks unless the user explicitly initiates that operation.
+
+## 7.5 Task views
+
+Provide:
+
+- List view.
+- Grouped view.
+- Today view.
+- Upcoming view.
+- Overdue view.
+- Completed view.
+- Project view.
+
+Keep kanban boards out of the mandatory first implementation unless all core workflows are stable. Design the architecture so a board view can be added without replacing the task engine.
+
+## 7.6 Recurring tasks
+
+Support daily, weekly, selected weekdays, monthly, and custom interval recurrence.
+
+Define whether a completed occurrence creates the next occurrence and how overdue occurrences are handled.
+
+Never duplicate occurrences during repeated app launches or reminder processing.
+
+Store recurrence rules in a versioned, documented representation.
+
+---
+
+# 8. ADVANCED HABIT TRACKING
+
+Habits must support realistic schedules rather than only daily yes/no checkboxes.
+
+## 8.1 Habit configuration
+
+Fields should include:
+
+- Name.
+- Description.
+- Category.
+- Icon and color.
+- Start date.
+- Schedule.
+- Target type.
+- Target value.
+- Target unit.
+- Optional preferred time.
+- Optional reminder.
+- Active or archived status.
+- Notes.
+- Created and updated timestamps.
+
+Support these target types:
+
+- Boolean: completed or not completed.
+- Numeric: for example, read 20 pages.
+- Duration: for example, study 45 minutes.
+- Repeated count: for example, drink a specified number of glasses of water.
+
+Allow custom units where practical.
+
+## 8.2 Scheduling
+
+Support:
+
+- Daily.
+- Selected weekdays.
+- Weekly targets.
+- Custom recurrence.
+- Multiple scheduled occurrences where appropriate.
+- Planned rest days.
+- Pause and resume.
+- Skip or excuse a scheduled occurrence.
+
+Skipped occurrences must be distinguishable from completed occurrences and missed occurrences.
+
+## 8.3 Completion history
+
+Store individual habit occurrences separately from habit definitions.
+
+Each occurrence must have:
+
+- Habit ID.
+- Scheduled date.
+- Target.
+- Recorded value.
+- Status.
+- Completion timestamp where applicable.
+- Optional note.
+
+Prevent duplicate occurrence records.
+
+Allow users to correct previous entries with a clear edit history where practical.
+
+## 8.4 Streak logic
+
+Define and test streak calculations.
+
+Requirements:
+
+- A planned rest day must not break a streak.
+- An explicitly skipped or excused occurrence must follow a documented, user-configurable streak policy.
+- A genuinely missed scheduled occurrence must be treated differently from an unscheduled day.
+- Numeric habits count as completed only when their configured completion rule is satisfied.
+- Editing an old record recalculates affected statistics correctly.
+- Streaks must not rely solely on a cached counter.
+
+Show current streak, best streak, completion rate, and historical trends.
+
+## 8.5 Habit insights
+
+Provide:
+
+- Weekly and monthly completion.
+- Calendar heatmap.
+- Current and longest streak.
+- Completion rate by weekday.
+- Historical trends.
+- Target consistency.
+- Optional comparison against the user's own previous periods.
+
+Never describe correlation as causation.
+
+Avoid guilt-driven messages such as failure warnings or shame-based streak loss animations.
+
+---
+
+# 9. GOALS AND MILESTONES
+
+Implement a goal-management system with:
+
+- Goal name.
+- Description.
+- Category.
+- Start and target dates.
+- Current progress.
+- Target value where applicable.
+- Linked projects.
+- Linked habits.
+- Milestones.
+- Status.
+- Notes.
+
+Support qualitative and measurable goals.
+
+Provide a goal detail screen with progress history and linked work.
+
+Avoid double-counting progress when the same task contributes to multiple goals. Use clearly defined progress rules and let the user understand how progress is calculated.
+
+Allow goals to be paused, completed, archived, or revised.
+
+---
+
+# 10. CALENDAR AND TIME-BLOCKING
+
+Build a fully local internal calendar.
+
+Support:
+
+- Month view.
+- Week view.
+- Day agenda.
+- Calendar event creation and editing.
+- Task scheduling.
+- Habit schedule visibility.
+- Focus session visibility.
+- Project milestones.
+- Event reminders.
+- All-day events.
+- Event recurrence.
+- Conflict warnings.
+- Time-zone-aware timestamps.
+
+Keep scheduled events distinct from tasks with due dates.
+
+Support drag-and-drop scheduling on Windows where practical, with an accessible alternative. Provide mobile-friendly rescheduling controls on Android.
+
+## Time-blocking
+
+Allow users to assign tasks to time blocks with:
+
+- Start time.
+- End time.
+- Linked task.
+- Optional project.
+- Notes.
+
+Warn about overlapping time blocks but allow intentional overlaps when appropriate.
+
+Never silently move existing events to resolve conflicts.
+
+Use consistent date and time calculations across platforms. Test daylight-saving transitions and local-date boundaries.
+
+Do not require Google Calendar or another online calendar service.
+
+---
+
+# 11. FOCUS TIMER AND STUDY MODE
+
+## Focus timer
+
+Implement:
+
+- Configurable focus duration.
+- Configurable short breaks.
+- Configurable long breaks.
+- Session start.
+- Pause.
+- Resume.
+- Stop with confirmation.
+- Session completion.
+- Optional auto-start behavior.
+- Optional sound.
+- Background timer recovery.
+- Session history.
+
+Use monotonic time sources or an equivalent reliable strategy rather than relying on repeatedly decrementing a counter once per second.
+
+The timer must remain accurate when the application is backgrounded or the desktop window is minimized.
+
+Persist enough state to recover an active session after app suspension or restart.
+
+Do not promise unrestricted background execution on Android; respect OS lifecycle and battery-management constraints.
+
+## Study mode
+
+Support:
+
+- Study subjects.
+- Learning goals.
+- Study tasks.
+- Linked focus sessions.
+- Study duration.
+- Session notes.
+- Revision reminders.
+- Subject-wise history.
+- Weekly study totals.
+
+Do not assume every study session must use the Pomodoro method.
+
+---
+
+# 12. WELLNESS TRACKING
+
+Provide an optional, general-purpose wellness space.
+
+Support configurable tracking for:
+
+- Sleep duration.
+- Water intake.
+- Exercise or movement.
+- Mood.
+- Energy.
+- Personal routines.
+- Custom numeric measurements.
+
+Allow the user to enable or disable individual trackers.
+
+Use locally stored records.
+
+Do not present the application as a medical device, provide medical diagnoses, or imply that correlations are medical conclusions.
+
+Wellness data must remain private and excluded from AI queries unless the user explicitly enables access to the relevant data categories.
+
+---
+
+# 13. PRIVATE JOURNAL
+
+Implement a journal with:
+
+- Rich text or structured text editing.
+- Daily entries.
+- Optional mood and energy fields.
+- Tags.
+- Search.
+- Date-based navigation.
+- Linked tasks, goals, and projects where useful.
+- Autosave.
+- Explicit save-state feedback.
+- Local attachment support where practical.
+- Export and backup support.
+
+Prevent data loss when navigating away from an edited entry.
+
+Handle application crashes and unexpected termination as safely as practical.
+
+Do not send journal content to any external service.
+
+Journal indexing and search must remain local.
+
+The AI must not access journal entries by default unless the user enables that category in AI privacy settings.
+
+---
+
+# 14. GAMIFICATION: SUBTLE AND OPTIONAL
+
+The app should reward consistency without becoming a game-first product.
+
+Implement:
+
+- XP.
+- Levels.
+- Achievements.
+- Streak indicators.
+- Progress charts.
+- Milestones.
+- Optional completion animations.
+
+Do not build a virtual pet, competitive leaderboard, loot-box mechanic, or forced quest system.
+
+Avoid punitive mechanics and shame-based language.
+
+Define an explicit XP policy. Example actions may include completing a scheduled habit, finishing a task, or finishing a focus session.
+
+Requirements:
+
+- No XP farming by repeatedly completing and reopening the same record.
+- No duplicate rewards after restart.
+- Clear handling of deleted or edited records.
+- Achievement evaluation must be deterministic and testable.
+- XP should not influence factual productivity analytics.
+- Gamification can be reduced or disabled in settings.
+
+Achievements should emphasize consistency, effort, and meaningful milestones.
+
+---
+
+# 15. ANALYTICS AND INSIGHTS
+
+Build an offline analytics engine using actual database records.
+
+Provide:
+
+- Daily, weekly, and monthly task completion.
+- Habit completion rates.
+- Streak history.
+- Focus time.
+- Study time.
+- Project progress.
+- Goal progress.
+- Workload by date.
+- Overdue task trends.
+- Time estimates versus actual focus time, where data exists.
+- Custom date ranges.
+- Charts and accessible textual summaries.
+
+Use deterministic calculations for all numerical statistics.
+
+Do not fabricate missing data, interpolate values without labeling them, or infer that the user worked for a duration merely because a task was marked complete.
+
+Clearly distinguish:
+
+- No data.
+- Zero activity.
+- Incomplete data.
+- Calculated metrics.
+
+All analytics must work without AI.
+
+Provide a locally computed insights layer that can identify patterns, such as habit completion being higher on certain weekdays, when sufficient data exists.
+
+Use appropriate minimum sample sizes and explain uncertainty. Do not claim causation.
+
+---
+
+# 16. OFFLINE AI COMPANION
+
+This is a major feature and must be implemented as a real local inference system.
+
+Do not substitute a remote Gemini API call, cloud LLM, simulated chat response, or hardcoded answer for the local AI.
+
+## 16.1 Model architecture
+
+Create a model-management system that:
+
+1. Detects supported platform and relevant device capabilities.
+2. Estimates available storage and memory where permitted.
+3. Recommends an appropriate model.
+4. Shows model name, size, license, supported runtime, and expected limitations.
+5. Requires user approval before downloading.
+6. Downloads model files from a documented, legitimate source.
+7. Validates download integrity against a trusted checksum.
+8. Stores the model locally.
+9. Supports cancellation and safe retry.
+10. Shows download progress.
+11. Verifies model compatibility before activation.
+12. Allows the user to remove a downloaded model.
+13. Provides a clear recovery path if initialization fails.
+
+Model downloads may require internet. Ordinary AI inference must not.
+
+Use a maintained, compatible local inference runtime.
+
+For example, evaluate llama.cpp or another suitable maintained runtime for supported quantized GGUF models. Verify actual compatibility for Android and Windows before choosing the final integration.
+
+Do not assume a runtime is usable on both platforms just because it supports one of them.
+
+For Windows, use an appropriate native inference integration or a managed local process with a documented lifecycle.
+
+For Android, use a compatible native inference library with correct Android ABI packaging, memory handling, and lifecycle management.
+
+Do not ship an empty runtime adapter or placeholder that pretends to generate model responses.
+
+If a genuine runtime cannot be completed in the current environment, implement the adapter contract and management UI, clearly identify the missing runtime integration, and do not mark offline AI as complete.
+
+## 16.2 Adaptive model policy
+
+Use automatic model recommendation by default.
+
+On Windows, prefer a more capable model when available RAM, storage, and hardware support make it practical.
+
+On Android, prioritize balanced quality, acceptable latency, reasonable memory consumption, and battery efficiency.
+
+Do not select a model based solely on total RAM. Consider available memory, model context size, quantization, runtime support, and the possibility of memory pressure.
+
+Allow manual model selection in advanced settings.
+
+The AI must work with a smaller supported model when necessary. Do not assume that every device can run a large model.
+
+Provide a useful non-AI experience when no compatible model is installed.
+
+## 16.3 AI privacy controls
+
+Create explicit settings for AI access to:
+
+- Tasks.
+- Habits.
+- Projects.
+- Goals.
+- Calendar.
+- Study sessions.
+- Wellness.
+- Journal.
+
+Sensitive categories, particularly journal and wellness records, must be opt-in.
+
+Explain that selected local records will be made available to the on-device AI for the requested operation.
+
+The AI must never:
+
+- Upload personal data.
+- Send prompts to a remote service.
+- Silently switch to a cloud model.
+- Access unrelated records unnecessarily.
+- Modify the database.
+- Create or complete tasks.
+- Change reminders.
+- Reschedule events.
+- Delete records.
+
+## 16.4 Read-only tool architecture
+
+Separate the AI conversation layer from a deterministic local data-query layer.
+
+Expose a restricted set of read-only operations, such as:
+
+- `get_tasks`
+- `get_overdue_tasks`
+- `get_habit_history`
+- `get_habit_statistics`
+- `get_project_progress`
+- `get_goal_progress`
+- `get_calendar_events`
+- `get_focus_history`
+- `get_study_statistics`
+- `get_wellness_summary`
+- `search_journal`
+- `get_journal_entries`
+- `get_productivity_summary`
+
+Each operation must enforce data-category permissions and input validation.
+
+Use parameterized SQL, explicit date boundaries, limits, and deterministic aggregation.
+
+Do not let the model execute arbitrary SQL or arbitrary code.
+
+Journal queries must return only the permitted content and requested date range.
+
+Do not send the entire database to the model for every question.
+
+## 16.5 AI capabilities
+
+The AI should be able to:
+
+- Answer questions about the user's records.
+- Summarize the day or week.
+- Explain trends in habit consistency.
+- Identify overdue work.
+- Summarize project status.
+- Explain progress toward goals.
+- Suggest a balanced schedule.
+- Help break down goals conceptually.
+- Brainstorm ideas.
+- Draft notes and plans.
+- Explain how to use the app.
+- Provide general knowledge and reasoning supported by its local model.
+
+When asked about records, it must query the relevant local data rather than guess.
+
+When asked a numerical question, use deterministic calculations and provide the relevant date range.
+
+When the necessary data is unavailable or permissions are denied, explain the limitation.
+
+Clearly distinguish verified app data from general AI suggestions.
+
+The assistant must never claim to have inspected records that it did not actually retrieve.
+
+## 16.6 AI user interface
+
+Build a complete assistant interface containing:
+
+- Conversation history stored locally.
+- New conversation.
+- Rename and delete conversation.
+- Suggested prompts.
+- Streaming output if supported by the runtime.
+- Stop generation.
+- Copy response.
+- Clear source or data-range descriptions.
+- Model status.
+- Inference progress.
+- Context-length handling.
+- Graceful handling of model errors.
+- AI privacy controls.
+
+Provide a visible indicator when AI is unavailable, downloading, initializing, or generating.
+
+Do not freeze the UI during inference.
+
+Manage memory consumption carefully and allow generation to be cancelled.
+
+## 16.7 Honest AI limitations
+
+Do not promise unlimited knowledge or perfect answers.
+
+The AI's general capabilities depend on the selected model.
+
+Offline models do not automatically know current events and cannot browse the web unless a separate, explicitly configured online feature is introduced.
+
+Do not introduce such an online feature in this version.
+
+---
+
+# 17. NOTIFICATIONS AND EXPRESSIVE POP-UPS
+
+Implement two distinct systems.
+
+## 17.1 In-app notification layer
+
+Create expressive floating notification cards inspired by modern consumer-app feedback, without copying another application's branding or artwork.
+
+Support notification types such as:
+
+- Task completed.
+- Habit recorded.
+- Focus session completed.
+- Achievement unlocked.
+- Reminder due.
+- Backup completed.
+- Model download completed.
+- Error requiring attention.
+
+Use custom icons, subtle motion, contextual copy, and optional sound.
+
+Support stacking, dismissal, accessibility announcements, and reduced-motion preferences.
+
+Prevent notification spam when many events occur at once.
+
+Do not show a celebration for every minor action.
+
+## 17.2 Operating-system notifications
+
+Implement actual native notifications for:
+
+- Scheduled task reminders.
+- Habit reminders.
+- Calendar events.
+- Focus timer completion.
+- Study reminders.
+
+Requirements:
+
+- Request permissions at the correct time.
+- Explain why notifications are useful.
+- Allow per-category notification settings.
+- Support quiet hours.
+- Avoid duplicate notifications.
+- Handle time-zone changes.
+- Respect operating-system scheduling limitations.
+- Recover or reschedule notifications after application updates where supported.
+
+Android must use appropriate notification channels and platform scheduling mechanisms.
+
+Windows must use the appropriate native notification mechanism supported by the chosen shell.
+
+Do not claim notifications work while the app is closed unless this has been tested on the target platform.
+
+## 17.3 Notification preferences
+
+Provide settings for:
+
+- Enabled notification categories.
+- Sound on/off.
+- Quiet hours.
+- Reminder lead time.
+- In-app animation intensity.
+- Celebration intensity.
+- Preview privacy.
+- Test notification.
+
+A test button must trigger a genuine test notification on the active platform.
+
+---
+
+# 18. SOUND AND AUDIO ASSETS
+
+Provide optional ambient focus audio and short completion sounds.
+
+All bundled audio must be:
+
+- Original, generated specifically for the application, or properly licensed for redistribution.
+- Documented in an asset-license manifest.
+- Free of unapproved copyrighted samples.
+
+Do not assume that audio found online is copyright-free.
+
+Prefer a small set of original synthesized sounds and simple ambient loops.
+
+Requirements:
+
+- Audio disabled by default where appropriate.
+- Volume control.
+- Mute control.
+- No automatic loud playback.
+- Respect system mute settings where supported.
+- Stop audio when the relevant session ends.
+- Avoid audio playback when the application is backgrounded unless the user explicitly starts a supported background focus session.
+
+Do not make audio necessary for any feature.
+
+---
+
+# 19. NATURAL-LANGUAGE QUICK CAPTURE
+
+Implement an offline natural-language capture interface.
+
+Example input:
+
+"Study machine learning tomorrow at 7 PM for 45 minutes."
+
+The application should extract candidate fields such as:
+
+- Task title.
+- Date.
+- Time.
+- Duration.
+- Optional project or tag.
+
+The parser must work without a model where practical, using deterministic rules for supported patterns.
+
+When local AI is available, it may assist with more flexible phrasing.
+
+Before saving ambiguous input, show a confirmation preview.
+
+Do not silently invent dates, priorities, or recurrence rules.
+
+Use the device's local time zone.
+
+Support correction and cancellation before creating a record.
+
+---
+
+# 20. DATA MODEL AND DATABASE DESIGN
+
+Design a normalized, versioned SQLite schema.
+
+Include suitable tables for:
+
+- Tasks.
+- Task dependencies.
+- Projects.
+- Project milestones.
+- Habits.
+- Habit occurrences.
+- Goals.
+- Goal milestones.
+- Calendar events.
+- Time blocks.
+- Focus sessions.
+- Study subjects.
+- Study sessions.
+- Wellness trackers.
+- Wellness entries.
+- Journal entries.
+- Tags.
+- Record-tag relationships.
+- Attachments.
+- Notifications and reminder schedules.
+- Achievements.
+- XP ledger.
+- User settings.
+- Dashboard layouts.
+- AI conversations.
+- AI messages.
+- Model metadata.
+- Backup metadata.
+
+Adjust the schema where necessary, but avoid redundant storage and inconsistent relationships.
+
+Use stable IDs.
+
+Use UTC timestamps for absolute instants and explicit local-date fields for date-only concepts such as habit occurrence dates.
+
+Store time-zone information where necessary for recurrence and calendar behavior.
+
+Define how recurring task instances, recurring calendar events, and habit occurrences are generated.
+
+Add unique constraints to prevent duplicate occurrences and rewards.
+
+Use soft deletion only where it serves a defined recovery or history requirement. Do not retain deleted sensitive content indefinitely without a documented reason.
+
+Create database migrations and tests for each migration.
+
+---
+
+# 21. ERROR HANDLING AND RELIABILITY
+
+Implement user-friendly error handling for:
+
+- Database initialization failure.
+- Database migration failure.
+- Corrupted or invalid backup.
+- Insufficient storage.
+- Model download failure.
+- Invalid model file.
+- Unsupported AI runtime.
+- Out-of-memory conditions.
+- Notification permission denial.
+- Attachment access failure.
+- Invalid dates or recurrence rules.
+- Import conflicts.
+- Failed file writes.
+
+Do not silently discard unsaved changes.
+
+Never display a success message before an operation succeeds.
+
+Use structured local logs with redaction. Do not write journal contents, AI prompts, PINs, or other sensitive information to logs.
+
+Provide a diagnostics screen with application version, database version, model status, storage usage where available, and recent non-sensitive errors.
+
+Do not include personal records in diagnostic exports unless the user explicitly selects them.
+
+---
+
+# 22. PERFORMANCE REQUIREMENTS
+
+Aim for:
+
+- Responsive navigation.
+- Immediate visual feedback on local actions.
+- Efficient list rendering.
+- Indexed database queries.
+- Pagination or virtualization for large histories.
+- Background processing for expensive analytics.
+- Cancellable AI inference.
+- Controlled memory use.
+- Efficient chart rendering.
+- Minimal startup work.
+- No unnecessary animations.
+
+Use loading states for operations that take noticeable time.
+
+Avoid blocking the UI thread with database migrations, large imports, model initialization, or analytics calculations.
+
+Define sensible timeouts and cancellation behavior.
+
+Do not hardcode performance claims without measurement.
+
+---
+
+# 23. REQUIRED TESTING STRATEGY
+
+Testing is part of implementation, not a final optional step.
+
+## Unit tests
+
+Test:
+
+- Task completion and reopening.
+- Recurrence generation.
+- Habit scheduling.
+- Streak calculations.
+- Planned rest days.
+- Skipped occurrences.
+- Numeric habit targets.
+- XP ledger consistency.
+- Achievement evaluation.
+- Project progress.
+- Goal progress.
+- Date boundaries.
+- Time-zone transitions.
+- Natural-language parsing.
+- Analytics calculations.
+- Backup validation.
+- AI permission filtering.
+
+## Database tests
+
+Test:
+
+- Database creation.
+- Migrations.
+- CRUD operations.
+- Transactions.
+- Referential integrity.
+- Duplicate prevention.
+- Import and restore.
+- Interrupted operations.
+- Recovery from malformed data.
+
+## Integration tests
+
+Test:
+
+- Creating a task and restarting the app.
+- Completing a habit and verifying its history.
+- Rescheduling a task and checking reminders.
+- Creating a recurring task without duplicate occurrences.
+- Starting and recovering a focus session.
+- Switching themes.
+- Exporting and restoring data.
+- Disabling AI access to a sensitive data category.
+- Running an AI query against actual local records.
+- Confirming that AI operations cannot modify records.
+- Running core functionality with network access disabled.
+
+## Platform tests
+
+On Android, validate:
+
+- App installation and launch.
+- Database persistence.
+- Native notifications.
+- Notification permission denial.
+- Background timer behavior.
+- Storage permissions.
+- Model download and initialization.
+- Memory pressure.
+- App-lock behavior.
+- Backup and restore.
+
+On Windows, validate:
+
+- Installer or executable launch.
+- Database persistence.
+- Keyboard navigation.
+- Native notifications.
+- File selection and backup.
+- Model download and initialization.
+- Application restart and recovery.
+- App-lock behavior.
+- Window resizing and layout.
+
+## Build validation
+
+Run the relevant commands for the selected toolchain, including:
+
+- TypeScript type checking.
+- Linting.
+- Unit tests.
+- Integration tests.
+- Production frontend build.
+- Android native build.
+- Windows native build.
+- Packaging and signing validation where available.
+
+Do not claim that a command succeeded unless it was actually executed and its result inspected.
+
+When a required native build cannot be run in the available environment, state the exact limitation and provide the precise commands and prerequisites for validation on the appropriate machine.
+
+---
+
+# 24. IMPLEMENTATION PLAN
+
+Build the complete product through controlled phases. The goal is the full application, not a reduced final product. Phasing exists to preserve correctness and make debugging manageable.
+
+## Phase 0 — Inspect and establish the project
+
+1. Inspect the existing project and toolchain.
+2. Identify available execution environments.
+3. Establish the shared architecture.
+4. Create the folder structure.
+5. Set up TypeScript strict mode.
+6. Configure linting, formatting, and tests.
+7. Define platform adapters.
+8. Document architecture decisions.
+9. Verify the first build.
+
+Deliverable: a compiling project with a documented architecture and a working test command.
+
+## Phase 1 — Design system and application shell
+
+Implement:
+
+- Theme tokens.
+- Light and dark themes.
+- Theme presets.
+- Responsive navigation.
+- Dashboard shell.
+- Reusable dialogs, forms, cards, buttons, and notifications.
+- Accessibility foundations.
+- Empty, loading, and error states.
+
+Deliverable: a fully navigable UI with functional theme switching, not a collection of static screenshots.
+
+## Phase 2 — Local database and settings
+
+Implement:
+
+- SQLite integrations.
+- Repository layer.
+- Database migrations.
+- Settings persistence.
+- Search foundation.
+- Backup format.
+- Error handling.
+
+Deliverable: reliable local persistence on both target platforms.
+
+## Phase 3 — Core productivity features
+
+Implement:
+
+- Inbox.
+- Tasks.
+- Projects.
+- Habits.
+- Goals.
+- Recurring rules.
+- Calendar.
+- Reminders.
+
+Deliverable: real CRUD workflows and validated scheduling behavior.
+
+## Phase 4 — Focus and personal tracking
+
+Implement:
+
+- Focus timer.
+- Study mode.
+- Wellness.
+- Journal.
+- Attachments where supported.
+- XP.
+- Achievements.
+- Progress analytics.
+
+Deliverable: functional personal productivity modules with real stored data.
+
+## Phase 5 — Native integrations
+
+Implement and validate:
+
+- Android notification scheduling.
+- Windows notifications.
+- Native file access.
+- App lock.
+- Backup and restore.
+- Platform lifecycle handling.
+- Sound and audio controls.
+
+Deliverable: tested platform integrations, not mocked adapters.
+
+## Phase 6 — Offline AI
+
+Implement:
+
+- Device capability detection.
+- Model recommendations.
+- Model download and integrity validation.
+- Local inference runtimes.
+- Model management.
+- Permission-filtered local data queries.
+- AI conversation interface.
+- Natural-language assistance.
+- Error recovery and cancellation.
+
+Deliverable: real local model inference on supported devices, with explicit limitations where device hardware or runtime compatibility prevents a capability.
+
+## Phase 7 — Quality and release preparation
+
+Complete:
+
+- Full automated tests.
+- Regression tests.
+- Security review.
+- Accessibility review.
+- Offline operation testing.
+- Performance profiling.
+- Database migration validation.
+- Android packaging.
+- Windows packaging.
+- User documentation.
+- Installation instructions.
+- Backup and recovery documentation.
+
+Deliverable: release-ready source code and packages where the environment supports them.
+
+---
+
+# 25. SOURCE CODE AND PROJECT STRUCTURE
+
+Maintain a clear structure along these lines:
+
+- `src/app/` — application shell, routing, and initialization.
+- `src/components/` — reusable UI components.
+- `src/features/` — product modules.
+- `src/domain/` — business rules and domain models.
+- `src/services/` — application services.
+- `src/database/` — schemas, migrations, repositories.
+- `src/platform/` — platform capability interfaces and implementations.
+- `src/ai/` — model management, inference, tools, permissions.
+- `src/analytics/` — deterministic calculations and insights.
+- `src/notifications/` — notification scheduling and display.
+- `src/theme/` — design tokens and theme presets.
+- `src/utils/` — shared utilities.
+- `tests/` — unit, integration, and regression tests.
+- `android/` — Android native project and configuration.
+- `src-tauri/` — Tauri desktop project and configuration.
+- `docs/` — architecture, setup, testing, and release documentation.
+
+Adapt this layout where necessary without mixing business logic into UI components.
+
+Create separate files for logically distinct responsibilities.
+
+Avoid giant components, duplicated business logic, circular dependencies, and unexplained global state.
+
+---
+
+# 26. CODE GENERATION RULES
+
+These requirements are mandatory.
+
+1. Generate complete, compilable code for each implemented module.
+2. Do not provide partial snippets as a substitute for required project files.
+3. Do not use pseudocode for core functionality.
+4. Do not leave TODO comments in place of required features.
+5. Do not use fake database services.
+6. Do not simulate AI responses.
+7. Do not create fake native notifications.
+8. Do not create buttons without working actions.
+9. Do not silently omit difficult platform integrations.
+10. Do not claim that unimplemented functionality is complete.
+11. Do not suppress TypeScript errors with broad `any` types or unsafe casts merely to force compilation.
+12. Do not disable lint rules to conceal defects.
+13. Do not remove tests to make a build pass.
+14. Do not replace a real implementation with a static demo after an integration fails.
+15. Do not overwrite existing working project files without first inspecting their contents.
+16. Preserve valid project configuration and existing user data.
+17. Use environment variables only for appropriate non-secret configuration; do not introduce cloud API keys for the offline AI.
+18. Document required native setup and platform permissions.
+19. Ensure every import resolves and every required dependency is declared.
+20. Keep the app runnable after every completed phase.
+
+For each phase:
+
+- State the implementation objective.
+- Create or update the necessary complete files.
+- Run available validation commands.
+- Inspect and resolve errors.
+- Report what passed and what remains blocked.
+- Continue to the next phase only after the current phase is sufficiently stable.
+
+If the environment imposes response or file-generation limits, split the work into logical batches while preserving the full implementation plan. Maintain a checklist of completed and remaining files.
+
+Do not repeatedly regenerate the entire codebase from scratch.
+
+---
+
+# 27. DEFINITION OF DONE
+
+The project is not complete merely because it compiles or looks attractive.
+
+The full product is complete only when the applicable criteria below are satisfied.
+
+### Core application
+
+- Navigation works.
+- Themes persist.
+- Records persist after restart.
+- CRUD operations work.
+- Search returns real local records.
+- Habit schedules and streaks are tested.
+- Task recurrence does not create duplicates.
+- Calendar events use correct dates and times.
+- Analytics reflect real database data.
+- Backups can be restored.
+- Errors are visible and recoverable.
+
+### Privacy
+
+- No cloud database.
+- No account requirement.
+- No external AI inference.
+- No hidden telemetry.
+- No personal-data uploads.
+- Sensitive AI access is permission-controlled.
+- AI tools are read-only.
+- Offline core features work with network access disabled.
+
+### AI
+
+- A real supported local model can be installed.
+- Model downloads are validated.
+- Inference occurs locally.
+- AI answers about app data use real local queries.
+- Numerical statistics come from deterministic calculations.
+- Unsupported model capabilities are clearly communicated.
+- AI cannot mutate application records.
+
+### Native platforms
+
+- Android and Windows builds use the shared application codebase.
+- Platform-specific integrations are implemented.
+- Installation and launch are tested on real target environments.
+- Native notifications are tested under documented lifecycle conditions.
+- Platform-specific storage and backup behavior is validated.
+
+### Quality
+
+- Automated tests pass for the tested scope.
+- Production builds succeed where the toolchain is available.
+- No unresolved critical defects are hidden.
+- Setup and release instructions are complete.
+- Every remaining limitation is explicitly documented.
+
+Use a status of `implemented`, `tested`, `blocked`, or `not implemented` for major requirements. Never label a feature `tested` merely because its source code exists.
+
+---
+
+# 28. FINAL INSTRUCTION
+
+Begin by inspecting the current project and available development environment.
+
+Then:
+
+1. Establish the architecture.
+2. Create a concise implementation checklist.
+3. Implement the design system and application shell.
+4. Build the real local database and core business logic.
+5. Implement every required feature in the defined phases.
+6. Integrate native Android and Windows capabilities.
+7. Integrate genuine offline AI inference.
+8. Run tests and builds.
+9. Fix defects rather than hiding them.
+10. Prepare the complete source tree and documented packaging instructions.
+
+Do not stop after the checklist, architecture document, or dashboard.
+
+Do not ask me to reconfirm product requirements already specified here. If an implementation choice remains unspecified, choose the safest practical default consistent with the requirements, document it, and proceed.
+
+If a required capability cannot be implemented or validated in the current environment, identify the exact blocker, complete the surrounding functionality, and provide the concrete remaining steps without misrepresenting the result.
+
+**The objective is a complete, private, polished, genuinely offline-capable personal productivity application for Android and Windows—not a prototype that merely looks finished.**
