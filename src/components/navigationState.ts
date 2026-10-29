@@ -34,6 +34,7 @@ export type Destination =
   | 'wellness'
   | 'insights'
   | 'achievements'
+  | 'tutorial'
   | 'settings';
 
 export type NavGroupKey = 'core' | 'planning' | 'reflection' | 'system';
@@ -86,6 +87,7 @@ export const NAV_ITEMS: NavItem[] = [
   { id: 'insights', label: 'Insights', icon: BarChart3, group: 'reflection' },
   { id: 'achievements', label: 'Achievements', icon: Trophy, group: 'reflection' },
 
+  { id: 'tutorial', label: 'App Tutorial', icon: BookOpen, group: 'system' },
   { id: 'settings', label: 'Settings', icon: Settings, group: 'system' },
 ];
 
@@ -131,23 +133,34 @@ export interface NavigationSnapshot {
   zenMode: boolean;
   collapsedGroups: NavGroupKey[];
   pinnedDestinations: Destination[];
+  sidebarCollapsed: boolean;
 }
 
 type NavigationListener = (snapshot: NavigationSnapshot) => void;
 
-interface StoredNavPrefs {
+export interface StoredNavPrefs {
   zenMode?: boolean;
   collapsedGroups?: NavGroupKey[];
   pinnedDestinations?: Destination[];
+  sidebarCollapsed?: boolean;
 }
 
-function loadStoredNavPrefs(): StoredNavPrefs {
+export const VALID_NAV_GROUPS = new Set<NavGroupKey>(['core', 'planning', 'reflection', 'system']);
+
+export function isValidNavGroup(value: unknown): value is NavGroupKey {
+  return typeof value === 'string' && VALID_NAV_GROUPS.has(value as NavGroupKey);
+}
+
+export function loadStoredNavPrefs(): StoredNavPrefs {
   if (typeof localStorage === 'undefined') return {};
   try {
     const raw = localStorage.getItem(NAV_PREFS_STORAGE_KEY);
     if (!raw) return {};
-    const parsed = JSON.parse(raw) as StoredNavPrefs;
-    return parsed && typeof parsed === 'object' ? parsed : {};
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+      return {};
+    }
+    return parsed as StoredNavPrefs;
   } catch {
     return {};
   }
@@ -156,7 +169,8 @@ function loadStoredNavPrefs(): StoredNavPrefs {
 /**
  * Local state manager for AppShell and SidebarNavigation view states.
  * Manages view transitions between Tasks, Journal, Calendar, and all AppShell destinations,
- * plus Zen Mode (Core Only), collapsible navigation groups, and pinned favorite destinations.
+ * plus Zen Mode (Core Only), collapsible navigation groups, pinned favorite destinations,
+ * and desktop sidebar expanded/collapsed state.
  */
 export class NavigationStateManager {
   private snapshot: NavigationSnapshot;
@@ -172,18 +186,23 @@ export class NavigationStateManager {
     const validPinned = Array.isArray(storedPrefs.pinnedDestinations)
       ? storedPrefs.pinnedDestinations.filter(isValidDestination).slice(0, MAX_PINNED_DESTINATIONS)
       : [];
+    const validGroups = Array.isArray(storedPrefs.collapsedGroups)
+      ? storedPrefs.collapsedGroups.filter(isValidNavGroup)
+      : [];
 
     this.snapshot = {
       currentView: startView,
       previousView: null,
       lastPrimaryView: isPrimaryWorkspaceView(startView) ? startView : 'tasks',
       visitedCount: 1,
-      zenMode: Boolean(storedPrefs.zenMode),
-      collapsedGroups: Array.isArray(storedPrefs.collapsedGroups)
-        ? storedPrefs.collapsedGroups
-        : [],
+      zenMode: typeof storedPrefs.zenMode === 'boolean' ? storedPrefs.zenMode : false,
+      collapsedGroups: validGroups,
       pinnedDestinations:
         validPinned.length > 0 ? validPinned : [...DEFAULT_PINNED_DESTINATIONS],
+      sidebarCollapsed:
+        typeof storedPrefs.sidebarCollapsed === 'boolean'
+          ? storedPrefs.sidebarCollapsed
+          : false,
     };
   }
 
@@ -304,6 +323,22 @@ export class NavigationStateManager {
     return nextPinned;
   }
 
+  public toggleSidebarCollapsed(explicitValue?: boolean): boolean {
+    const nextCollapsed =
+      typeof explicitValue === 'boolean' ? explicitValue : !this.snapshot.sidebarCollapsed;
+    this.snapshot = {
+      ...this.snapshot,
+      sidebarCollapsed: nextCollapsed,
+    };
+    this.persistPrefs();
+    this.emit();
+    return nextCollapsed;
+  }
+
+  public setSidebarCollapsed(collapsed: boolean): boolean {
+    return this.toggleSidebarCollapsed(Boolean(collapsed));
+  }
+
   /**
    * Cycles through the primary workspace views: Tasks -> Journal -> Calendar -> Tasks
    */
@@ -333,6 +368,7 @@ export class NavigationStateManager {
         zenMode: this.snapshot.zenMode,
         collapsedGroups: this.snapshot.collapsedGroups,
         pinnedDestinations: this.snapshot.pinnedDestinations,
+        sidebarCollapsed: this.snapshot.sidebarCollapsed,
       };
       localStorage.setItem(NAV_PREFS_STORAGE_KEY, JSON.stringify(payload));
     } catch {
@@ -374,10 +410,13 @@ export function useNavigationState(manager: NavigationStateManager = navigationM
     zenMode: snapshot.zenMode,
     collapsedGroups: snapshot.collapsedGroups,
     pinnedDestinations: snapshot.pinnedDestinations,
+    sidebarCollapsed: snapshot.sidebarCollapsed,
     navigateTo,
     toggleZenMode: (val?: boolean) => manager.toggleZenMode(val),
     toggleGroupCollapsed: (group: NavGroupKey) => manager.toggleGroupCollapsed(group),
     togglePinnedDestination: (dest: Destination) => manager.togglePinnedDestination(dest),
+    toggleSidebarCollapsed: (val?: boolean) => manager.toggleSidebarCollapsed(val),
+    setSidebarCollapsed: (val: boolean) => manager.setSidebarCollapsed(val),
     cyclePrimaryWorkspace: () => manager.cyclePrimaryWorkspace(),
   };
 }

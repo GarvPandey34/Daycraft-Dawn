@@ -11,9 +11,11 @@ import {
   Sparkles,
 } from 'lucide-react';
 import { db } from '../../database/db';
-import { calculateHabitStreak, formatLocalDate, addDays } from '../../services/streakService';
+import { calculateHabitStreak, formatLocalDate } from '../../services/streakService';
 import { calculateLevel } from '../../services/gamificationService';
 import { SevenDayCompletionDashboard } from './SevenDayCompletionDashboard';
+import { FRESH_START_EMPTY_STATES } from '../../services/tutorialService';
+import { BookOpen } from 'lucide-react';
 
 interface InsightsViewProps {
   onNavigate?: (destination: string) => void;
@@ -35,6 +37,7 @@ export const InsightsView: React.FC<InsightsViewProps> = ({ onNavigate }) => {
   const achievements = db.getAchievements();
   const totalXp = db.getTotalXp();
   const levelInfo = calculateLevel(totalXp);
+  const hasPersonalActivity = db.hasPersonalActivity();
 
   // Completed tasks count
   const completedTasks = tasks.filter(t => t.status === 'completed');
@@ -78,10 +81,51 @@ export const InsightsView: React.FC<InsightsViewProps> = ({ onNavigate }) => {
           </div>
           <h1 className="text-2xl font-bold tracking-tight mt-0.5">Productivity & Habit Insights</h1>
           <p className="text-xs" style={{ color: 'var(--text-secondary)' }}>
-            Computed 100% locally from your SQLite records. Zero telemetry, zero guesswork.
+            Computed 100% locally from your personal records. Zero telemetry, zero guesswork.
           </p>
         </div>
       </div>
+
+      {/* Fresh-Start Guidance Banner when no personal activity exists yet */}
+      {!hasPersonalActivity && (
+        <div
+          className="p-5 rounded-2xl border flex flex-col sm:flex-row sm:items-center justify-between gap-4"
+          style={{
+            backgroundColor: 'var(--bg-surface-elevated)',
+            borderColor: 'var(--border)',
+          }}
+        >
+          <div className="space-y-1">
+            <h2 className="text-sm font-bold" style={{ color: 'var(--text-primary)' }}>
+              {FRESH_START_EMPTY_STATES.insights.headline}
+            </h2>
+            <p className="text-xs" style={{ color: 'var(--text-secondary)' }}>
+              {FRESH_START_EMPTY_STATES.insights.description}
+            </p>
+          </div>
+          {onNavigate && (
+            <div className="flex flex-wrap items-center gap-2 shrink-0">
+              <button
+                type="button"
+                onClick={() => onNavigate('tasks')}
+                className="px-3 py-1.5 rounded-xl text-xs font-semibold cursor-pointer"
+                style={{ backgroundColor: 'var(--accent)', color: 'var(--accent-foreground)' }}
+              >
+                Create a Task
+              </button>
+              <button
+                type="button"
+                onClick={() => onNavigate('tutorial')}
+                className="px-3 py-1.5 rounded-xl border text-xs font-semibold flex items-center gap-1.5 cursor-pointer"
+                style={{ backgroundColor: 'var(--bg-surface)', borderColor: 'var(--border)', color: 'var(--text-primary)' }}
+              >
+                <BookOpen className="w-3.5 h-3.5" />
+                <span>Explore App Tutorial</span>
+              </button>
+            </div>
+          )}
+        </div>
+      )}
 
       {/* 7-Day Completion Visualization Dashboard (Recharts) */}
       <SevenDayCompletionDashboard
@@ -201,30 +245,51 @@ export const InsightsView: React.FC<InsightsViewProps> = ({ onNavigate }) => {
             <span>Habit Consistency & Streaks</span>
           </h3>
 
-          <div className="divide-y text-xs" style={{ borderColor: 'var(--border)' }}>
-            {habits.map(h => {
-              const stats = calculateHabitStreak(h, occurrences, todayStr);
-              return (
-                <div key={h.id} className="py-2.5 flex items-center justify-between">
-                  <div>
-                    <span className="font-semibold block">{h.name}</span>
-                    <span className="text-[11px]" style={{ color: 'var(--text-muted)' }}>
-                      Target: {h.targetValue} {h.targetUnit}
-                    </span>
-                  </div>
+          {habits.length === 0 ? (
+            <div className="py-6 text-center space-y-2">
+              <p className="text-xs font-semibold" style={{ color: 'var(--text-primary)' }}>
+                {FRESH_START_EMPTY_STATES.habits.headline}
+              </p>
+              <p className="text-[11px]" style={{ color: 'var(--text-muted)' }}>
+                {FRESH_START_EMPTY_STATES.habits.description}
+              </p>
+              {onNavigate && (
+                <button
+                  type="button"
+                  onClick={() => onNavigate('habits')}
+                  className="mt-1 px-3 py-1.5 rounded-xl text-xs font-semibold cursor-pointer"
+                  style={{ backgroundColor: 'var(--accent-subtle)', color: 'var(--accent)' }}
+                >
+                  {FRESH_START_EMPTY_STATES.habits.actionLabel}
+                </button>
+              )}
+            </div>
+          ) : (
+            <div className="divide-y text-xs" style={{ borderColor: 'var(--border)' }}>
+              {habits.map(h => {
+                const stats = calculateHabitStreak(h, occurrences, todayStr);
+                return (
+                  <div key={h.id} className="py-2.5 flex items-center justify-between">
+                    <div>
+                      <span className="font-semibold block">{h.name}</span>
+                      <span className="text-[11px]" style={{ color: 'var(--text-muted)' }}>
+                        Target: {h.targetValue} {h.targetUnit}
+                      </span>
+                    </div>
 
-                  <div className="text-right">
-                    <span className="font-bold text-amber-600 block">
-                      {stats.currentStreak}d streak
-                    </span>
-                    <span className="text-[11px]" style={{ color: 'var(--text-muted)' }}>
-                      30d rate: {stats.completionRate30d}%
-                    </span>
+                    <div className="text-right">
+                      <span className="font-bold text-amber-600 block">
+                        {stats.currentStreak}d streak
+                      </span>
+                      <span className="text-[11px]" style={{ color: 'var(--text-muted)' }}>
+                        30d rate: {stats.completionRate30d}%
+                      </span>
+                    </div>
                   </div>
-                </div>
-              );
-            })}
-          </div>
+                );
+              })}
+            </div>
+          )}
         </div>
 
         {/* Day-of-Week Distribution Pattern */}

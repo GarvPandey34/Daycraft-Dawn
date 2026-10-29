@@ -49,10 +49,40 @@ import {
   ThemePresetKey,
   ThemeUnlockContext,
 } from '../theme/tokens';
-import { getInitialSeedData } from './initialSeed';
+import { DEFAULT_WELLNESS_TRACKERS, getInitialSeedData } from './initialSeed';
+import { tutorialManager } from '../services/tutorialService';
 
 const DB_STORAGE_KEY = 'daycraft_database_v1';
 const SCHEMA_VERSION = 1;
+export const RESET_CONFIRMATION_PHRASE = 'RESET';
+
+export interface ResetPersonalDataOptions {
+  confirmed: boolean;
+  confirmationText?: string;
+  preserveThemePreferences?: boolean;
+  preserveTutorialProgress?: boolean;
+}
+
+export interface ResetPersonalDataResult {
+  success: boolean;
+  error?: string;
+  clearedCounts: {
+    tasks: number;
+    habits: number;
+    habitOccurrences: number;
+    habitRoutines: number;
+    projects: number;
+    goals: number;
+    calendarEvents: number;
+    timeBlocks: number;
+    focusSessions: number;
+    studySubjects: number;
+    studySessions: number;
+    wellnessEntries: number;
+    journalEntries: number;
+    xpLedger: number;
+  };
+}
 
 export interface LevelUpEvent {
   previousLevel: number;
@@ -274,7 +304,10 @@ export class DatabaseManager {
     this.focusSessions = Array.isArray(data.focusSessions) ? (data.focusSessions as FocusSession[]) : [];
     this.studySubjects = Array.isArray(data.studySubjects) ? (data.studySubjects as StudySubject[]) : [];
     this.studySessions = Array.isArray(data.studySessions) ? (data.studySessions as StudySession[]) : [];
-    this.wellnessTrackers = Array.isArray(data.wellnessTrackers) ? (data.wellnessTrackers as WellnessTracker[]) : [];
+    this.wellnessTrackers =
+      Array.isArray(data.wellnessTrackers) && data.wellnessTrackers.length > 0
+        ? (data.wellnessTrackers as WellnessTracker[])
+        : DEFAULT_WELLNESS_TRACKERS.map(w => ({ ...w }));
     this.wellnessEntries = Array.isArray(data.wellnessEntries) ? (data.wellnessEntries as WellnessEntry[]) : [];
     this.journalEntries = Array.isArray(data.journalEntries) ? (data.journalEntries as JournalEntry[]) : [];
     this.achievements =
@@ -575,8 +608,191 @@ export class DatabaseManager {
     return { success: true, errors: [] };
   }
 
+  hasPersonalActivity(): boolean {
+    return (
+      this.tasks.length > 0 ||
+      this.habits.length > 0 ||
+      this.habitOccurrences.length > 0 ||
+      this.habitRoutines.length > 0 ||
+      this.projects.length > 0 ||
+      this.goals.length > 0 ||
+      this.calendarEvents.length > 0 ||
+      this.timeBlocks.length > 0 ||
+      this.focusSessions.length > 0 ||
+      this.studySubjects.length > 0 ||
+      this.studySessions.length > 0 ||
+      this.wellnessEntries.length > 0 ||
+      this.journalEntries.length > 0 ||
+      this.xpLedger.length > 0 ||
+      this.achievements.some(a => Boolean(a.unlockedAt))
+    );
+  }
+
+  resetPersonalData(options: ResetPersonalDataOptions): ResetPersonalDataResult {
+    const emptyCounts = {
+      tasks: 0,
+      habits: 0,
+      habitOccurrences: 0,
+      habitRoutines: 0,
+      projects: 0,
+      goals: 0,
+      calendarEvents: 0,
+      timeBlocks: 0,
+      focusSessions: 0,
+      studySubjects: 0,
+      studySessions: 0,
+      wellnessEntries: 0,
+      journalEntries: 0,
+      xpLedger: 0,
+    };
+
+    if (!options || options.confirmed !== true) {
+      return {
+        success: false,
+        error: 'Explicit confirmation is required before resetting personal data.',
+        clearedCounts: emptyCounts,
+      };
+    }
+
+    if (
+      options.confirmationText !== undefined &&
+      options.confirmationText.trim().toUpperCase() !== RESET_CONFIRMATION_PHRASE
+    ) {
+      return {
+        success: false,
+        error: `Please type "${RESET_CONFIRMATION_PHRASE}" to confirm erasing personal data.`,
+        clearedCounts: emptyCounts,
+      };
+    }
+
+    const clearedCounts = {
+      tasks: this.tasks.length,
+      habits: this.habits.length,
+      habitOccurrences: this.habitOccurrences.length,
+      habitRoutines: this.habitRoutines.length,
+      projects: this.projects.length,
+      goals: this.goals.length,
+      calendarEvents: this.calendarEvents.length,
+      timeBlocks: this.timeBlocks.length,
+      focusSessions: this.focusSessions.length,
+      studySubjects: this.studySubjects.length,
+      studySessions: this.studySessions.length,
+      wellnessEntries: this.wellnessEntries.length,
+      journalEntries: this.journalEntries.length,
+      xpLedger: this.xpLedger.length,
+    };
+
+    const preserveTheme = options.preserveThemePreferences ?? true;
+    const preserveTutorial = options.preserveTutorialProgress ?? true;
+    const currentSettings = { ...this.settings };
+    const defaultSettings = getInitialSeedData().defaultSettings;
+
+    // Clear all personal collections
+    this.tasks = [];
+    this.habits = [];
+    this.habitOccurrences = [];
+    this.habitRoutines = [];
+    this.projects = [];
+    this.goals = [];
+    this.calendarEvents = [];
+    this.timeBlocks = [];
+    this.focusSessions = [];
+    this.studySubjects = [];
+    this.studySessions = [];
+    this.wellnessEntries = [];
+    this.journalEntries = [];
+    this.xpLedger = [];
+    this.wellnessTrackers = DEFAULT_WELLNESS_TRACKERS.map(w => ({ ...w }));
+    this.achievements = INITIAL_ACHIEVEMENTS.map(a => ({
+      ...a,
+      unlockedAt: undefined,
+      current: 0,
+      progress: 0,
+    }));
+
+    const cleanUnlockContext: ThemeUnlockContext = {
+      level: 1,
+      unlockedAchievementIds: new Set<string>(),
+    };
+
+    const nextThemePreset = preserveTheme
+      ? resolveEligibleThemePreset(currentSettings.themePreset, cleanUnlockContext)
+      : defaultSettings.themePreset;
+    const nextThemeMode = preserveTheme
+      ? currentSettings.themeMode || defaultSettings.themeMode
+      : defaultSettings.themeMode;
+
+    this.settings = {
+      ...defaultSettings,
+      appName: currentSettings.appName || defaultSettings.appName,
+      themePreset: nextThemePreset,
+      themeMode: nextThemeMode,
+      reduceMotion: currentSettings.reduceMotion ?? defaultSettings.reduceMotion,
+      soundEnabled: currentSettings.soundEnabled ?? defaultSettings.soundEnabled,
+      soundVolume: currentSettings.soundVolume ?? defaultSettings.soundVolume,
+      celebrationEnabled:
+        currentSettings.celebrationEnabled ?? defaultSettings.celebrationEnabled,
+      quietHoursEnabled:
+        currentSettings.quietHoursEnabled ?? defaultSettings.quietHoursEnabled,
+      quietHoursStart: currentSettings.quietHoursStart || defaultSettings.quietHoursStart,
+      quietHoursEnd: currentSettings.quietHoursEnd || defaultSettings.quietHoursEnd,
+      notificationsEnabled:
+        currentSettings.notificationsEnabled ?? defaultSettings.notificationsEnabled,
+      remindersLeadMinutes:
+        currentSettings.remindersLeadMinutes ?? defaultSettings.remindersLeadMinutes,
+      gamificationEnabled:
+        currentSettings.gamificationEnabled ?? defaultSettings.gamificationEnabled,
+      defaultFocusDurationMinutes:
+        currentSettings.defaultFocusDurationMinutes ??
+        defaultSettings.defaultFocusDurationMinutes,
+      defaultShortBreakMinutes:
+        currentSettings.defaultShortBreakMinutes ?? defaultSettings.defaultShortBreakMinutes,
+      defaultLongBreakMinutes:
+        currentSettings.defaultLongBreakMinutes ?? defaultSettings.defaultLongBreakMinutes,
+      focusDeviceSettings: currentSettings.focusDeviceSettings
+        ? { ...currentSettings.focusDeviceSettings }
+        : defaultSettings.focusDeviceSettings
+          ? { ...defaultSettings.focusDeviceSettings }
+          : undefined,
+      autoBackupEnabled:
+        currentSettings.autoBackupEnabled ?? defaultSettings.autoBackupEnabled,
+      autoBackupDays: currentSettings.autoBackupDays ?? defaultSettings.autoBackupDays,
+      // Reset progression, backup timestamp, and PIN lock
+      appLockEnabled: false,
+      appLockPinHash: undefined,
+      appLockSalt: undefined,
+      claimedLevelRewards: [],
+      unseenAchievementIds: [],
+      lastBackupDate: undefined,
+    };
+
+    this.recalculateAchievements({ silent: true });
+    this.syncClaimedLevelsAndTheme();
+
+    if (typeof window !== 'undefined' && window.localStorage) {
+      try {
+        window.localStorage.setItem('daycraft_theme_preset', this.settings.themePreset);
+        if (this.settings.themeMode) {
+          window.localStorage.setItem('daycraft_theme_mode', this.settings.themeMode);
+        }
+      } catch {
+        // Ignore storage errors
+      }
+    }
+
+    if (!preserveTutorial) {
+      tutorialManager.resetAllTutorialProgress();
+    }
+
+    this.persist();
+    return {
+      success: true,
+      clearedCounts,
+    };
+  }
+
   resetAllData(): void {
-    this.seedInitial();
+    this.resetPersonalData({ confirmed: true, confirmationText: RESET_CONFIRMATION_PHRASE });
   }
 
   // --- Tasks Repository ---
@@ -936,15 +1152,15 @@ export class DatabaseManager {
 
   // --- Calendar & Time-blocking ---
   getCalendarEvents(): CalendarEvent[] {
-    return this.calendarEvents;
+    return [...this.calendarEvents];
   }
 
   saveCalendarEvent(event: CalendarEvent): void {
     const idx = this.calendarEvents.findIndex(e => e.id === event.id);
     if (idx >= 0) {
-      this.calendarEvents[idx] = event;
+      this.calendarEvents = this.calendarEvents.map((e, i) => (i === idx ? event : e));
     } else {
-      this.calendarEvents.push(event);
+      this.calendarEvents = [...this.calendarEvents, event];
     }
     this.persist();
   }
@@ -955,15 +1171,15 @@ export class DatabaseManager {
   }
 
   getTimeBlocks(): TimeBlock[] {
-    return this.timeBlocks;
+    return [...this.timeBlocks];
   }
 
   saveTimeBlock(block: TimeBlock): void {
     const idx = this.timeBlocks.findIndex(b => b.id === block.id);
     if (idx >= 0) {
-      this.timeBlocks[idx] = block;
+      this.timeBlocks = this.timeBlocks.map((b, i) => (i === idx ? block : b));
     } else {
-      this.timeBlocks.push(block);
+      this.timeBlocks = [...this.timeBlocks, block];
     }
     this.persist();
   }
@@ -975,7 +1191,7 @@ export class DatabaseManager {
 
   // --- Focus Sessions ---
   getFocusSessions(): FocusSession[] {
-    return this.focusSessions;
+    return [...this.focusSessions];
   }
 
   recordFocusSession(session: FocusSession): RewardOutcome {
@@ -983,9 +1199,9 @@ export class DatabaseManager {
     const previousUnlockedIds = this.getUnlockedAchievementIds();
     const existingIdx = this.focusSessions.findIndex(s => s.id === session.id);
     if (existingIdx >= 0) {
-      this.focusSessions[existingIdx] = session;
+      this.focusSessions = this.focusSessions.map((s, i) => (i === existingIdx ? session : s));
     } else {
-      this.focusSessions.push(session);
+      this.focusSessions = [...this.focusSessions, session];
     }
 
     let xpAwarded = 0;
@@ -1009,15 +1225,15 @@ export class DatabaseManager {
 
   // --- Study Mode ---
   getStudySubjects(): StudySubject[] {
-    return this.studySubjects;
+    return [...this.studySubjects];
   }
 
   saveStudySubject(sub: StudySubject): void {
     const idx = this.studySubjects.findIndex(s => s.id === sub.id);
     if (idx >= 0) {
-      this.studySubjects[idx] = sub;
+      this.studySubjects = this.studySubjects.map((s, i) => (i === idx ? sub : s));
     } else {
-      this.studySubjects.push(sub);
+      this.studySubjects = [...this.studySubjects, sub];
     }
     this.persist();
   }
@@ -1029,7 +1245,7 @@ export class DatabaseManager {
   }
 
   getStudySessions(): StudySession[] {
-    return this.studySessions;
+    return [...this.studySessions];
   }
 
   recordStudySession(session: StudySession): RewardOutcome {
@@ -1037,9 +1253,9 @@ export class DatabaseManager {
     const previousUnlockedIds = this.getUnlockedAchievementIds();
     const existingIdx = this.studySessions.findIndex(s => s.id === session.id);
     if (existingIdx >= 0) {
-      this.studySessions[existingIdx] = session;
+      this.studySessions = this.studySessions.map((s, i) => (i === existingIdx ? session : s));
     } else {
-      this.studySessions.push(session);
+      this.studySessions = [...this.studySessions, session];
     }
 
     let xpAwarded = 0;
@@ -1063,22 +1279,22 @@ export class DatabaseManager {
 
   // --- Wellness ---
   getWellnessTrackers(): WellnessTracker[] {
-    return this.wellnessTrackers;
+    return [...this.wellnessTrackers];
   }
 
   saveWellnessTracker(tracker: WellnessTracker): void {
     const idx = this.wellnessTrackers.findIndex(t => t.id === tracker.id);
     if (idx >= 0) {
-      this.wellnessTrackers[idx] = tracker;
+      this.wellnessTrackers = this.wellnessTrackers.map((t, i) => (i === idx ? tracker : t));
     } else {
-      this.wellnessTrackers.push(tracker);
+      this.wellnessTrackers = [...this.wellnessTrackers, tracker];
     }
     this.persist();
   }
 
   getWellnessEntries(date?: string): WellnessEntry[] {
     if (date) return this.wellnessEntries.filter(e => e.date === date);
-    return this.wellnessEntries;
+    return [...this.wellnessEntries];
   }
 
   recordWellnessEntry(entry: WellnessEntry): void {
@@ -1086,16 +1302,16 @@ export class DatabaseManager {
       e => e.trackerId === entry.trackerId && e.date === entry.date
     );
     if (idx >= 0) {
-      this.wellnessEntries[idx] = entry;
+      this.wellnessEntries = this.wellnessEntries.map((e, i) => (i === idx ? entry : e));
     } else {
-      this.wellnessEntries.push(entry);
+      this.wellnessEntries = [...this.wellnessEntries, entry];
     }
     this.persist();
   }
 
   // --- Journal ---
   getJournalEntries(): JournalEntry[] {
-    return this.journalEntries;
+    return [...this.journalEntries];
   }
 
   saveJournalEntry(entry: JournalEntry): RewardOutcome {
@@ -1194,7 +1410,7 @@ export class DatabaseManager {
 
   // --- Settings ---
   getSettings(): UserSettings {
-    return this.settings;
+    return { ...this.settings };
   }
 
   updateSettings(partial: Partial<UserSettings>): void {

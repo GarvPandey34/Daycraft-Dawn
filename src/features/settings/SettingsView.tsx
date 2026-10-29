@@ -21,9 +21,10 @@ import {
   AlertCircle,
   ShieldCheck,
   ChevronsUpDown,
+  Trash2,
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
-import { db } from '../../database/db';
+import { db, RESET_CONFIRMATION_PHRASE } from '../../database/db';
 import { useTheme } from '../../theme/ThemeContext';
 import { getThemeUnlockStatus, THEME_PRESETS, ThemePresetKey } from '../../theme/tokens';
 import { useNotifications } from '../../notifications/NotificationContext';
@@ -94,6 +95,13 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onNavigate }) => {
   const [deviceTestStatus, setDeviceTestStatus] = useState<'idle' | 'testing' | 'completed'>('idle');
   const [deviceTestResult, setDeviceTestResult] = useState<AppliedDeviceResult | null>(null);
   const [deviceRestoredBanner, setDeviceRestoredBanner] = useState<string | null>(null);
+
+  // Safe Reset Personal Data confirmation state
+  const [isResetConfirmOpen, setIsResetConfirmOpen] = useState(false);
+  const [resetConfirmationText, setResetConfirmationText] = useState('');
+  const [preserveThemeOnReset, setPreserveThemeOnReset] = useState(true);
+  const [preserveTutorialOnReset, setPreserveTutorialOnReset] = useState(true);
+  const [resetError, setResetError] = useState<string | null>(null);
 
   useEffect(() => {
     return db.subscribe(() => setTick(t => t + 1));
@@ -1209,19 +1217,147 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onNavigate }) => {
             variant="danger"
             icon={<RotateCcw className="w-4 h-4" />}
             onClick={() => {
-              db.resetAllData();
-              notify({
-                title: 'Database Reset',
-                message: 'Restored initial sample data.',
-                type: 'system',
-              });
-              flashSavedFeedback('Demo data restored');
+              setIsResetConfirmOpen(prev => !prev);
+              setResetConfirmationText('');
+              setResetError(null);
             }}
             className="ml-auto"
           >
-            Reset Demo Data
+            Reset Personal Data
           </TactileButton>
         </div>
+
+        <AnimatePresence>
+          {isResetConfirmOpen && (
+            <motion.div
+              initial={{ opacity: 0, y: -6 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -6 }}
+              role="region"
+              aria-label="Reset Personal Data Confirmation"
+              className="mt-4 p-5 rounded-2xl border space-y-4 bg-red-500/5 border-red-500/30"
+            >
+              <div className="flex items-start gap-3">
+                <AlertCircle className="w-5 h-5 text-red-500 shrink-0 mt-0.5" />
+                <div className="space-y-1.5 text-xs">
+                  <h4 className="font-bold text-sm text-red-600 dark:text-red-400">
+                    Confirm Permanent Reset of Personal Data
+                  </h4>
+                  <p style={{ color: 'var(--text-primary)' }}>
+                    This action will erase your personal records and return Daycraft to a clean, fresh-install state:
+                  </p>
+                  <ul className="list-disc pl-5 space-y-0.5" style={{ color: 'var(--text-secondary)' }}>
+                    <li>All tasks, subtasks, and projects</li>
+                    <li>All habits, habit completion occurrences, streaks, and routines</li>
+                    <li>All goals and milestones (active and achieved)</li>
+                    <li>All calendar events, time blocks, focus sessions, and study sessions</li>
+                    <li>All journal reflections and wellness entries</li>
+                    <li>All earned XP, level progression (resets to Level 1 · 0 XP), and unlocked achievements</li>
+                  </ul>
+                  <p className="font-semibold text-red-600 dark:text-red-400 pt-1">
+                    Warning: This action cannot be undone unless you have exported a verified .daycraft backup file first.
+                  </p>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-2 border-t border-red-500/20 text-xs">
+                <label className="flex items-center gap-2.5 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={preserveThemeOnReset}
+                    onChange={e => setPreserveThemeOnReset(e.target.checked)}
+                    className="rounded accent-emerald-600"
+                  />
+                  <span style={{ color: 'var(--text-primary)' }}>
+                    Keep Light/Dark mode &amp; base theme preference (progression-locked themes revert to Forest)
+                  </span>
+                </label>
+
+                <label className="flex items-center gap-2.5 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={preserveTutorialOnReset}
+                    onChange={e => setPreserveTutorialOnReset(e.target.checked)}
+                    className="rounded accent-emerald-600"
+                  />
+                  <span style={{ color: 'var(--text-primary)' }}>
+                    Keep App Tutorial completion progress
+                  </span>
+                </label>
+              </div>
+
+              <div className="pt-2 space-y-2">
+                <label
+                  htmlFor="reset-personal-data-input"
+                  className="block text-xs font-semibold"
+                  style={{ color: 'var(--text-primary)' }}
+                >
+                  Type <span className="font-mono font-bold text-red-600 dark:text-red-400">{RESET_CONFIRMATION_PHRASE}</span> to confirm:
+                </label>
+                <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2.5">
+                  <input
+                    id="reset-personal-data-input"
+                    type="text"
+                    value={resetConfirmationText}
+                    onChange={e => {
+                      setResetConfirmationText(e.target.value);
+                      setResetError(null);
+                    }}
+                    placeholder={`Type ${RESET_CONFIRMATION_PHRASE}`}
+                    className="px-3.5 py-2 rounded-xl border text-xs font-mono uppercase tracking-wider focus-visible:outline-none sm:w-56"
+                    style={{ backgroundColor: 'var(--bg-surface)', borderColor: 'var(--border)' }}
+                  />
+
+                  <TactileButton
+                    type="button"
+                    variant="danger"
+                    icon={<Trash2 className="w-3.5 h-3.5" />}
+                    disabled={resetConfirmationText.trim().toUpperCase() !== RESET_CONFIRMATION_PHRASE}
+                    onClick={() => {
+                      const res = db.resetPersonalData({
+                        confirmed: true,
+                        confirmationText: resetConfirmationText,
+                        preserveThemePreferences: preserveThemeOnReset,
+                        preserveTutorialProgress: preserveTutorialOnReset,
+                      });
+                      if (!res.success) {
+                        setResetError(res.error || 'Confirmation required.');
+                        return;
+                      }
+                      setIsResetConfirmOpen(false);
+                      setResetConfirmationText('');
+                      setResetError(null);
+                      notify({
+                        title: 'Personal Data Reset Complete',
+                        message: 'Workspace returned to a clean initial state (Level 1 · 0 XP).',
+                        type: 'system',
+                      });
+                      flashSavedFeedback('Personal data reset to clean state');
+                    }}
+                  >
+                    Confirm Reset Personal Data
+                  </TactileButton>
+
+                  <TactileButton
+                    type="button"
+                    variant="subtle"
+                    onClick={() => {
+                      setIsResetConfirmOpen(false);
+                      setResetConfirmationText('');
+                      setResetError(null);
+                    }}
+                  >
+                    Cancel
+                  </TactileButton>
+                </div>
+
+                {resetError && (
+                  <p className="text-xs text-red-500 font-medium">{resetError}</p>
+                )}
+              </div>
+            </motion.div>
+          )}
+        </AnimatePresence>
       </CollapsibleSection>
 
       {/* 8. Native Packaging & Platform Instructions */}

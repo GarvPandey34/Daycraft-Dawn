@@ -281,3 +281,47 @@ test('Task-to-Calendar Drag-and-Drop handler encodes payload, extracts task ID, 
   assert.equal(db.getTimeBlocks().length, 1);
 });
 
+test('NavigationStateManager toggles, sets, and persists sidebarCollapsed state safely', () => {
+  const storageMap = new Map<string, string>();
+  const mockLocalStorage = {
+    getItem: (k: string) => storageMap.get(k) ?? null,
+    setItem: (k: string, v: string) => {
+      storageMap.set(k, v);
+    },
+    removeItem: (k: string) => {
+      storageMap.delete(k);
+    },
+  };
+  (globalThis as unknown as { localStorage: typeof mockLocalStorage }).localStorage =
+    mockLocalStorage;
+
+  const manager = new NavigationStateManager('home');
+  assert.equal(manager.getSnapshot().sidebarCollapsed, false);
+
+  // Toggle to collapsed (icon rail)
+  const collapsedVal = manager.toggleSidebarCollapsed();
+  assert.equal(collapsedVal, true);
+  assert.equal(manager.getSnapshot().sidebarCollapsed, true);
+
+  // Verify persisted in localStorage
+  const storedRaw = storageMap.get('daycraft_nav_prefs_v1');
+  assert.ok(storedRaw);
+  const parsed = JSON.parse(storedRaw!);
+  assert.equal(parsed.sidebarCollapsed, true);
+
+  // New manager instance restores persisted sidebarCollapsed state
+  const restoredManager = new NavigationStateManager('home');
+  assert.equal(restoredManager.getSnapshot().sidebarCollapsed, true);
+
+  // Explicit setSidebarCollapsed(false)
+  restoredManager.setSidebarCollapsed(false);
+  assert.equal(restoredManager.getSnapshot().sidebarCollapsed, false);
+
+  // Corrupted JSON in localStorage falls back safely without throwing
+  storageMap.set('daycraft_nav_prefs_v1', '{broken-json');
+  const fallbackManager = new NavigationStateManager('home');
+  assert.equal(fallbackManager.getSnapshot().sidebarCollapsed, false);
+  assert.equal(fallbackManager.getSnapshot().zenMode, false);
+});
+
+

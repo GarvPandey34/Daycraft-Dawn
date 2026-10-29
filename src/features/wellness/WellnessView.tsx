@@ -60,7 +60,7 @@ export const WellnessView: React.FC = () => {
           </div>
           <h1 className="text-2xl font-bold tracking-tight mt-0.5">Wellness & Habits of Body</h1>
           <p className="text-xs" style={{ color: 'var(--text-secondary)' }}>
-            Calm, unpressured self-observation. All records are private and excluded from AI by default.
+            Calm, unpressured self-observation. All records are stored 100% privately on your device.
           </p>
         </div>
 
@@ -85,7 +85,7 @@ export const WellnessView: React.FC = () => {
       >
         <ShieldCheck className="w-5 h-5 text-emerald-600 shrink-0" />
         <span style={{ color: 'var(--text-secondary)' }}>
-          <strong>Privacy Guaranteed:</strong> Wellness logs are never transmitted anywhere and are strictly excluded from AI assistant queries unless you explicitly opt in under Settings &gt; AI Privacy Controls.
+          <strong>Privacy Guaranteed:</strong> Wellness logs are optional personal self-observation (never medical advice) and remain 100% on your device with zero external transmission.
         </span>
       </div>
 

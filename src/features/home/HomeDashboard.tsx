@@ -12,6 +12,8 @@ import {
   Eye,
   EyeOff,
   TrendingUp,
+  Target,
+  Sparkles,
 } from 'lucide-react';
 import {
   ResponsiveContainer,
@@ -28,6 +30,7 @@ import { calculateLevel } from '../../services/gamificationService';
 import { getSevenDayCompletionData } from '../../services/completionAnalyticsService';
 import { useMotionPreference } from '../../theme/motion';
 import { AnimatedCheckbox, EmptyStateMotion } from '../../components/MotionPrimitives';
+import { FRESH_START_EMPTY_STATES } from '../../services/tutorialService';
 
 interface HomeDashboardProps {
   onNavigate: (destination: string) => void;
@@ -74,15 +77,19 @@ export const HomeDashboard: React.FC<HomeDashboardProps> = ({ onNavigate, onOpen
   const habits = db.getHabits().filter(h => !h.archived);
   const occurrences = db.getHabitOccurrences();
   const projects = db.getProjects().filter(p => p.status !== 'archived');
+  const goals = db.getGoals().filter(g => g.status === 'active');
   const events = db.getCalendarEvents();
   const journals = db.getJournalEntries();
   const totalXp = db.getTotalXp();
   const levelInfo = calculateLevel(totalXp);
+  const hasPersonalActivity = db.hasPersonalActivity();
 
   // Today's priorities
   const todayTasks = tasks.filter(t => t.dueDate === todayStr || (!t.dueDate && t.priority === 'urgent'));
   const completedTodayTasks = todayTasks.filter(t => t.status === 'completed');
   const overdueTasks = tasks.filter(t => t.status !== 'completed' && t.dueDate && t.dueDate < todayStr);
+  const todayCompletionPercent =
+    todayTasks.length > 0 ? Math.round((completedTodayTasks.length / todayTasks.length) * 100) : 0;
 
   // Today's habit completions
   const todayHabitOccs = occurrences.filter(o => o.date === todayStr);
@@ -159,22 +166,22 @@ export const HomeDashboard: React.FC<HomeDashboardProps> = ({ onNavigate, onOpen
       variants={variants.cardListContainer}
       initial="initial"
       animate="animate"
-      className="p-6 max-w-6xl mx-auto space-y-6"
+      className="p-4 sm:p-6 max-w-6xl mx-auto space-y-6 min-w-0"
     >
       {/* Top Banner / Welcome */}
-      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 pb-4 border-b" style={{ borderColor: 'var(--border)' }}>
-        <div>
-          <h1 className="text-2xl font-bold tracking-tight">Today's Operating Dashboard</h1>
+      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 pb-4 border-b min-w-0" style={{ borderColor: 'var(--border)' }}>
+        <div className="min-w-0">
+          <h1 className="text-xl sm:text-2xl font-bold tracking-tight">Today's Operating Dashboard</h1>
           <p className="text-xs mt-1" style={{ color: 'var(--text-secondary)' }}>
             Fully local, private, and offline-first personal management system.
           </p>
         </div>
 
-        <div className="flex items-center gap-2.5">
+        <div className="flex flex-wrap items-center gap-2 shrink-0">
           {/* Level / XP status button */}
           <motion.button
             {...tactileProps}
-            onClick={() => onNavigate('insights')}
+            onClick={() => onNavigate('achievements')}
             className="flex items-center gap-2 px-3 py-1.5 rounded-xl border text-xs font-medium transition-colors hover:bg-black/5 dark:hover:bg-white/5 cursor-pointer"
             style={{
               backgroundColor: 'var(--bg-surface-elevated)',
@@ -217,6 +224,117 @@ export const HomeDashboard: React.FC<HomeDashboardProps> = ({ onNavigate, onOpen
           </motion.button>
         </div>
       </div>
+
+      {/* Fresh-Start Welcome Card (shown when database has no personal activity yet) */}
+      {!hasPersonalActivity && (
+        <motion.div
+          variants={variants.cardItem}
+          className="p-6 rounded-3xl border shadow-xs space-y-4"
+          style={{
+            backgroundColor: 'var(--bg-surface-elevated)',
+            borderColor: 'var(--border)',
+            boxShadow: 'var(--card-shadow)',
+          }}
+        >
+          <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+            <div className="space-y-1.5 max-w-2xl">
+              <div className="inline-flex items-center gap-1.5 text-xs font-bold uppercase tracking-wider" style={{ color: 'var(--accent)' }}>
+                <Sparkles className="w-3.5 h-3.5" />
+                <span>Fresh Start · Clean Workspace</span>
+              </div>
+              <h2 className="text-lg font-bold" style={{ color: 'var(--text-primary)' }}>
+                Welcome to Daycraft. Your personal workspace is clean and ready.
+              </h2>
+              <p className="text-xs leading-relaxed" style={{ color: 'var(--text-secondary)' }}>
+                There is no pre-filled sample clutter—every task, habit, streak, focus session, and XP milestone begins with your real actions. Choose a starting point below or explore the permanent App Tutorial.
+              </p>
+            </div>
+
+            <button
+              type="button"
+              onClick={() => onNavigate('tutorial')}
+              className="inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl text-xs font-bold shrink-0 cursor-pointer transition-opacity hover:opacity-90"
+              style={{
+                backgroundColor: 'var(--accent)',
+                color: 'var(--accent-foreground)',
+              }}
+            >
+              <BookOpen className="w-4 h-4" />
+              <span>Explore the app tutorial</span>
+            </button>
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 pt-2 border-t" style={{ borderColor: 'var(--border)' }}>
+            <button
+              type="button"
+              onClick={onOpenQuickAdd}
+              className="p-3.5 rounded-2xl border text-left hover:bg-black/[0.02] dark:hover:bg-white/[0.02] transition-colors cursor-pointer flex flex-col justify-between gap-2"
+              style={{ backgroundColor: 'var(--bg-surface)', borderColor: 'var(--border)' }}
+            >
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-bold" style={{ color: 'var(--text-primary)' }}>
+                  {FRESH_START_EMPTY_STATES.tasks.actionLabel}
+                </span>
+                <CheckCircle2 className="w-4 h-4 text-emerald-600" />
+              </div>
+              <p className="text-[11px]" style={{ color: 'var(--text-secondary)' }}>
+                {FRESH_START_EMPTY_STATES.tasks.description}
+              </p>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => onNavigate('habits')}
+              className="p-3.5 rounded-2xl border text-left hover:bg-black/[0.02] dark:hover:bg-white/[0.02] transition-colors cursor-pointer flex flex-col justify-between gap-2"
+              style={{ backgroundColor: 'var(--bg-surface)', borderColor: 'var(--border)' }}
+            >
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-bold" style={{ color: 'var(--text-primary)' }}>
+                  {FRESH_START_EMPTY_STATES.habits.actionLabel}
+                </span>
+                <Flame className="w-4 h-4 text-amber-500" />
+              </div>
+              <p className="text-[11px]" style={{ color: 'var(--text-secondary)' }}>
+                {FRESH_START_EMPTY_STATES.habits.description}
+              </p>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => onNavigate('goals')}
+              className="p-3.5 rounded-2xl border text-left hover:bg-black/[0.02] dark:hover:bg-white/[0.02] transition-colors cursor-pointer flex flex-col justify-between gap-2"
+              style={{ backgroundColor: 'var(--bg-surface)', borderColor: 'var(--border)' }}
+            >
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-bold" style={{ color: 'var(--text-primary)' }}>
+                  {FRESH_START_EMPTY_STATES.goals.actionLabel}
+                </span>
+                <Target className="w-4 h-4 text-violet-500" />
+              </div>
+              <p className="text-[11px]" style={{ color: 'var(--text-secondary)' }}>
+                {FRESH_START_EMPTY_STATES.goals.description}
+              </p>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => onNavigate('focus')}
+              className="p-3.5 rounded-2xl border text-left hover:bg-black/[0.02] dark:hover:bg-white/[0.02] transition-colors cursor-pointer flex flex-col justify-between gap-2"
+              style={{ backgroundColor: 'var(--bg-surface)', borderColor: 'var(--border)' }}
+            >
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-bold" style={{ color: 'var(--text-primary)' }}>
+                  {FRESH_START_EMPTY_STATES.focus.actionLabel}
+                </span>
+                <Play className="w-4 h-4 text-sky-500" />
+              </div>
+              <p className="text-[11px]" style={{ color: 'var(--text-secondary)' }}>
+                {FRESH_START_EMPTY_STATES.focus.description}
+              </p>
+            </button>
+          </div>
+        </motion.div>
+      )}
 
       {/* Widget Visibility Config Drawer */}
       <AnimatePresence initial={false}>
@@ -289,7 +407,7 @@ export const HomeDashboard: React.FC<HomeDashboardProps> = ({ onNavigate, onOpen
                       d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831"
                     />
                     <path
-                      strokeDasharray={`${todayTasks.length > 0 ? Math.round((completedTodayTasks.length / todayTasks.length) * 100) : 100}, 100`}
+                      strokeDasharray={`${todayCompletionPercent}, 100`}
                       strokeWidth="3.5"
                       strokeLinecap="round"
                       stroke="var(--accent)"
@@ -299,13 +417,15 @@ export const HomeDashboard: React.FC<HomeDashboardProps> = ({ onNavigate, onOpen
                     />
                   </svg>
                   <span className="absolute text-xs font-bold font-mono tabular-nums" style={{ color: 'var(--text-primary)' }}>
-                    {todayTasks.length > 0 ? Math.round((completedTodayTasks.length / todayTasks.length) * 100) : 100}%
+                    {todayCompletionPercent}%
                   </span>
                 </div>
                 <div>
                   <h3 className="text-sm font-bold">Daily Completion Progress</h3>
                   <p className="text-xs mt-0.5" style={{ color: 'var(--text-secondary)' }}>
-                    {completedTodayTasks.length} of {todayTasks.length} scheduled tasks completed today
+                    {todayTasks.length === 0
+                      ? 'No tasks scheduled for today yet'
+                      : `${completedTodayTasks.length} of ${todayTasks.length} scheduled tasks completed today`}
                   </p>
                 </div>
               </div>
@@ -450,10 +570,22 @@ export const HomeDashboard: React.FC<HomeDashboardProps> = ({ onNavigate, onOpen
               </div>
 
               {todayTasks.length === 0 ? (
-                <EmptyStateMotion className="p-6 text-center text-xs">
-                  <span style={{ color: 'var(--text-muted)' }}>
-                    No tasks due today. Use Quick Add (+) to capture priorities!
-                  </span>
+                <EmptyStateMotion className="p-6 text-center space-y-2">
+                  <p className="text-xs font-semibold" style={{ color: 'var(--text-primary)' }}>
+                    {FRESH_START_EMPTY_STATES.tasks.headline}
+                  </p>
+                  <p className="text-[11px]" style={{ color: 'var(--text-muted)' }}>
+                    {FRESH_START_EMPTY_STATES.tasks.description}
+                  </p>
+                  <button
+                    type="button"
+                    onClick={onOpenQuickAdd}
+                    className="mt-1 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold cursor-pointer"
+                    style={{ backgroundColor: 'var(--accent-subtle)', color: 'var(--accent)' }}
+                  >
+                    <Plus className="w-3.5 h-3.5" />
+                    <span>{FRESH_START_EMPTY_STATES.tasks.actionLabel}</span>
+                  </button>
                 </EmptyStateMotion>
               ) : (
                 <div className="divide-y" style={{ borderColor: 'var(--border)' }}>
@@ -546,47 +678,67 @@ export const HomeDashboard: React.FC<HomeDashboardProps> = ({ onNavigate, onOpen
                 </button>
               </div>
 
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
-                {habits.map((h) => {
-                  const occ = todayHabitOccs.find(o => o.habitId === h.id);
-                  const isDone = Boolean(occ && occ.recordedValue >= h.targetValue);
-                  return (
-                    <div
-                      key={h.id}
-                      className="p-3 rounded-xl border flex items-center justify-between gap-3 transition-all hover:bg-black/[0.015] dark:hover:bg-white/[0.015]"
-                      style={{
-                        backgroundColor: 'var(--bg-surface)',
-                        borderColor: isDone ? 'rgba(74, 124, 89, 0.4)' : 'var(--border)',
-                      }}
-                    >
-                      <div className="min-w-0">
-                        <div className="text-xs font-semibold truncate" style={{ color: 'var(--text-primary)' }}>
-                          {h.name}
-                        </div>
-                        <div className="text-[11px] mt-0.5 font-mono" style={{ color: 'var(--text-secondary)' }}>
-                          {h.targetValue} {h.targetUnit}
-                        </div>
-                      </div>
-
-                      <motion.button
-                        {...tactileProps}
-                        onClick={() => toggleHabit(h.id, h.targetValue)}
-                        aria-label={`Mark habit completed: ${h.name}`}
-                        className={`px-3 py-1 rounded-lg text-xs font-medium transition-all cursor-pointer ${
-                          isDone ? 'bg-emerald-600 text-white shadow-xs font-semibold' : 'border hover:bg-black/5 dark:hover:bg-white/5'
-                        }`}
+              {habits.length === 0 ? (
+                <EmptyStateMotion className="p-6 text-center space-y-2">
+                  <p className="text-xs font-semibold" style={{ color: 'var(--text-primary)' }}>
+                    {FRESH_START_EMPTY_STATES.habits.headline}
+                  </p>
+                  <p className="text-[11px]" style={{ color: 'var(--text-muted)' }}>
+                    {FRESH_START_EMPTY_STATES.habits.description}
+                  </p>
+                  <button
+                    type="button"
+                    onClick={() => onNavigate('habits')}
+                    className="mt-1 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold cursor-pointer"
+                    style={{ backgroundColor: 'var(--accent-subtle)', color: 'var(--accent)' }}
+                  >
+                    <Plus className="w-3.5 h-3.5" />
+                    <span>{FRESH_START_EMPTY_STATES.habits.actionLabel}</span>
+                  </button>
+                </EmptyStateMotion>
+              ) : (
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                  {habits.map((h) => {
+                    const occ = todayHabitOccs.find(o => o.habitId === h.id);
+                    const isDone = Boolean(occ && occ.recordedValue >= h.targetValue);
+                    return (
+                      <div
+                        key={h.id}
+                        className="p-3 rounded-xl border flex items-center justify-between gap-3 transition-all hover:bg-black/[0.015] dark:hover:bg-white/[0.015]"
                         style={{
-                          backgroundColor: isDone ? 'var(--success)' : 'var(--bg-surface-subtle)',
-                          borderColor: isDone ? 'transparent' : 'var(--border)',
-                          color: isDone ? '#FFFFFF' : 'var(--text-secondary)',
+                          backgroundColor: 'var(--bg-surface)',
+                          borderColor: isDone ? 'rgba(74, 124, 89, 0.4)' : 'var(--border)',
                         }}
                       >
-                        {isDone ? 'Done' : 'Check'}
-                      </motion.button>
-                    </div>
-                  );
-                })}
-              </div>
+                        <div className="min-w-0">
+                          <div className="text-xs font-semibold truncate" style={{ color: 'var(--text-primary)' }}>
+                            {h.name}
+                          </div>
+                          <div className="text-[11px] mt-0.5 font-mono" style={{ color: 'var(--text-secondary)' }}>
+                            {h.targetValue} {h.targetUnit}
+                          </div>
+                        </div>
+
+                        <motion.button
+                          {...tactileProps}
+                          onClick={() => toggleHabit(h.id, h.targetValue)}
+                          aria-label={`Mark habit completed: ${h.name}`}
+                          className={`px-3 py-1 rounded-lg text-xs font-medium transition-all cursor-pointer ${
+                            isDone ? 'bg-emerald-600 text-white shadow-xs font-semibold' : 'border hover:bg-black/5 dark:hover:bg-white/5'
+                          }`}
+                          style={{
+                            backgroundColor: isDone ? 'var(--success)' : 'var(--bg-surface-subtle)',
+                            borderColor: isDone ? 'transparent' : 'var(--border)',
+                            color: isDone ? '#FFFFFF' : 'var(--text-secondary)',
+                          }}
+                        >
+                          {isDone ? 'Done' : 'Check'}
+                        </motion.button>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
             </motion.div>
           )}
         </div>
@@ -609,10 +761,10 @@ export const HomeDashboard: React.FC<HomeDashboardProps> = ({ onNavigate, onOpen
                   Deep Focus Mode
                 </span>
                 <h3 className="text-sm font-bold mt-1" style={{ color: 'var(--text-primary)' }}>
-                  Ready for a productive sprint?
+                  {FRESH_START_EMPTY_STATES.focus.headline}
                 </h3>
                 <p className="text-xs mt-1" style={{ color: 'var(--text-secondary)' }}>
-                  Launch a 25-minute Pomodoro timer with procedural rain ambient sound.
+                  {FRESH_START_EMPTY_STATES.focus.description}
                 </p>
               </div>
 
@@ -626,8 +778,74 @@ export const HomeDashboard: React.FC<HomeDashboardProps> = ({ onNavigate, onOpen
                 }}
               >
                 <Play className="w-3.5 h-3.5 fill-current" />
-                <span>Start Focus Session</span>
+                <span>{FRESH_START_EMPTY_STATES.focus.actionLabel}</span>
               </motion.button>
+            </motion.div>
+          )}
+
+          {/* Active Goals Widget */}
+          {enabledWidgets.goals && (
+            <motion.div
+              variants={variants.cardItem}
+              {...cardHoverProps}
+              className="tactile-card p-5 rounded-2xl border shadow-sm"
+              style={{
+                backgroundColor: 'var(--bg-surface-elevated)',
+                borderColor: 'var(--border)',
+                boxShadow: 'var(--card-shadow)',
+              }}
+            >
+              <div className="flex items-center justify-between mb-3">
+                <div className="flex items-center gap-1.5 text-xs font-bold" style={{ color: 'var(--text-secondary)' }}>
+                  <Target className="w-4 h-4 text-violet-500" />
+                  <span>Active Goals ({goals.length})</span>
+                </div>
+                <button
+                  onClick={() => onNavigate('goals')}
+                  className="text-xs hover:underline cursor-pointer"
+                  style={{ color: 'var(--accent)' }}
+                >
+                  All Goals
+                </button>
+              </div>
+
+              {goals.length === 0 ? (
+                <div className="space-y-2">
+                  <p className="text-xs font-semibold" style={{ color: 'var(--text-primary)' }}>
+                    {FRESH_START_EMPTY_STATES.goals.headline}
+                  </p>
+                  <p className="text-[11px]" style={{ color: 'var(--text-muted)' }}>
+                    {FRESH_START_EMPTY_STATES.goals.description}
+                  </p>
+                  <button
+                    type="button"
+                    onClick={() => onNavigate('goals')}
+                    className="inline-flex items-center gap-1 text-xs font-semibold hover:underline cursor-pointer"
+                    style={{ color: 'var(--accent)' }}
+                  >
+                    <span>{FRESH_START_EMPTY_STATES.goals.actionLabel}</span>
+                    <ArrowRight className="w-3 h-3" />
+                  </button>
+                </div>
+              ) : (
+                <div className="space-y-3">
+                  {goals.slice(0, 3).map(g => {
+                    const doneMs = g.milestones.filter(m => m.completed).length;
+                    const pct = g.milestones.length > 0 ? Math.round((doneMs / g.milestones.length) * 100) : 0;
+                    return (
+                      <div key={g.id}>
+                        <div className="flex justify-between text-xs mb-1 font-medium">
+                          <span className="truncate">{g.title}</span>
+                          <span className="font-mono tabular-nums" style={{ color: 'var(--text-secondary)' }}>{pct}%</span>
+                        </div>
+                        <div className="w-full h-1.5 rounded-full overflow-hidden" style={{ backgroundColor: 'var(--bg-surface-subtle)' }}>
+                          <div className="h-full rounded-full transition-all duration-300" style={{ width: `${pct}%`, backgroundColor: 'var(--accent)' }} />
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
             </motion.div>
           )}
 
@@ -700,24 +918,30 @@ export const HomeDashboard: React.FC<HomeDashboardProps> = ({ onNavigate, onOpen
                 </button>
               </div>
 
-              <div className="space-y-3">
-                {projects.slice(0, 3).map(p => {
-                  const pTasks = tasks.filter(t => t.projectId === p.id);
-                  const pDone = pTasks.filter(t => t.status === 'completed').length;
-                  const pct = pTasks.length > 0 ? Math.round((pDone / pTasks.length) * 100) : 0;
-                  return (
-                    <div key={p.id}>
-                      <div className="flex justify-between text-xs mb-1 font-medium">
-                        <span className="truncate">{p.name}</span>
-                        <span className="font-mono tabular-nums" style={{ color: 'var(--text-secondary)' }}>{pct}%</span>
+              {projects.length === 0 ? (
+                <p className="text-xs" style={{ color: 'var(--text-muted)' }}>
+                  No active projects yet. Group multi-step tasks under Projects when ready.
+                </p>
+              ) : (
+                <div className="space-y-3">
+                  {projects.slice(0, 3).map(p => {
+                    const pTasks = tasks.filter(t => t.projectId === p.id);
+                    const pDone = pTasks.filter(t => t.status === 'completed').length;
+                    const pct = pTasks.length > 0 ? Math.round((pDone / pTasks.length) * 100) : 0;
+                    return (
+                      <div key={p.id}>
+                        <div className="flex justify-between text-xs mb-1 font-medium">
+                          <span className="truncate">{p.name}</span>
+                          <span className="font-mono tabular-nums" style={{ color: 'var(--text-secondary)' }}>{pct}%</span>
+                        </div>
+                        <div className="w-full h-1.5 rounded-full overflow-hidden" style={{ backgroundColor: 'var(--bg-surface-subtle)' }}>
+                          <div className="h-full rounded-full transition-all duration-300" style={{ width: `${pct}%`, backgroundColor: p.color || 'var(--accent)' }} />
+                        </div>
                       </div>
-                      <div className="w-full h-1.5 rounded-full overflow-hidden" style={{ backgroundColor: 'var(--bg-surface-subtle)' }}>
-                        <div className="h-full rounded-full transition-all duration-300" style={{ width: `${pct}%`, backgroundColor: p.color || 'var(--accent)' }} />
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
+                    );
+                  })}
+                </div>
+              )}
             </motion.div>
           )}
 

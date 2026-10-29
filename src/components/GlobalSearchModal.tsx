@@ -15,6 +15,7 @@ import {
   Download,
   Plus,
   Minimize2,
+  PanelLeftClose,
   Sun,
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
@@ -23,7 +24,7 @@ import { useMotionPreference, MOTION_SPRINGS } from '../theme/motion';
 import { useTheme } from '../theme/ThemeContext';
 import { fileSystemAdapter } from '../platform/adapters';
 import { useNotifications } from '../notifications/NotificationContext';
-import { navigationManager } from './navigationState';
+import { navigationManager, NAV_ITEMS } from './navigationState';
 
 interface GlobalSearchModalProps {
   isOpen: boolean;
@@ -94,6 +95,26 @@ export const GlobalSearchModal: React.FC<GlobalSearchModalProps> = ({
       },
     },
     {
+      id: 'act_toggle_sidebar_collapse',
+      title: `${
+        navigationManager.getSnapshot().sidebarCollapsed ? 'Expand' : 'Collapse'
+      } Navigation Sidebar`,
+      subtitle: 'Command • Toggle between full sidebar and compact icon rail (⌘B)',
+      type: 'Action',
+      icon: <PanelLeftClose className="w-4 h-4" style={{ color: 'var(--accent)' }} />,
+      action: () => {
+        const nextCollapsed = navigationManager.toggleSidebarCollapsed();
+        notify({
+          title: nextCollapsed ? 'Sidebar Collapsed' : 'Sidebar Expanded',
+          message: nextCollapsed
+            ? 'Switched to compact icon rail.'
+            : 'Restored full navigation sidebar.',
+          type: 'system',
+        });
+        onClose();
+      },
+    },
+    {
       id: 'act_zen_sidebar',
       title: `Toggle Sidebar Zen Mode (${
         navigationManager.getSnapshot().zenMode ? 'Disable' : 'Enable Core Only'
@@ -107,7 +128,7 @@ export const GlobalSearchModal: React.FC<GlobalSearchModalProps> = ({
           title: next ? 'Zen Sidebar Enabled' : 'Full Sidebar Restored',
           message: next
             ? 'Showing core daily views only.'
-            : 'All 15 destinations visible.',
+            : `All ${NAV_ITEMS.length} destinations visible.`,
           type: 'system',
         });
         onClose();
@@ -139,6 +160,14 @@ export const GlobalSearchModal: React.FC<GlobalSearchModalProps> = ({
       type: 'Action',
       icon: <Sun className="w-4 h-4 text-amber-500" />,
       dest: 'myday',
+    },
+    {
+      id: 'act_open_tutorial',
+      title: 'Open App Tutorial & Guided Tour',
+      subtitle: 'Navigation • Interactive walkthroughs for all Daycraft features',
+      type: 'Action',
+      icon: <BookOpen className="w-4 h-4 text-emerald-600" />,
+      dest: 'tutorial',
     },
   ];
 

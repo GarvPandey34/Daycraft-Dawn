@@ -1,7 +1,8 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import {
   Home,
   Sun,
+  Moon,
   CheckCircle2,
   Calendar,
   BookOpen,
@@ -21,6 +22,7 @@ import { InAppNotificationStack } from './InAppNotificationStack';
 import { SidebarNavigation } from './SidebarNavigation';
 import {
   Destination,
+  NAV_ITEMS,
   getDestinationFromLocation,
   isValidDestination,
   useNavigationState,
@@ -44,6 +46,7 @@ import { WellnessView } from '../features/wellness/WellnessView';
 import { JournalView } from '../features/journal/JournalView';
 import { InsightsView } from '../features/insights/InsightsView';
 import { AchievementsView } from '../features/achievements/AchievementsView';
+import { TutorialView } from '../features/tutorial/TutorialView';
 import { SettingsView } from '../features/settings/SettingsView';
 
 export type { Destination } from './navigationState';
@@ -55,10 +58,12 @@ export const AppShell: React.FC = () => {
   const {
     currentDestination,
     zenMode,
+    sidebarCollapsed,
     collapsedGroups,
     pinnedDestinations,
     navigateTo: setNavigationView,
     toggleZenMode,
+    setSidebarCollapsed,
     toggleGroupCollapsed,
     togglePinnedDestination,
   } = useNavigationState();
@@ -66,7 +71,51 @@ export const AppShell: React.FC = () => {
   const [isSearchOpen, setIsSearchOpen] = useState(false);
   const [isLocked, setIsLocked] = useState(false);
   const [mobileDrawerOpen, setMobileDrawerOpen] = useState(false);
+  const [isTabletViewport, setIsTabletViewport] = useState<boolean>(() =>
+    typeof window !== 'undefined' ? window.innerWidth >= 768 && window.innerWidth < 1024 : false
+  );
+  const [tabletManualOverride, setTabletManualOverride] = useState<boolean | null>(null);
   const [, setTick] = useState(0);
+  const lastNonTutorialDestRef = useRef<Destination>('home');
+  const mobileMenuTriggerRef = useRef<HTMLButtonElement | null>(null);
+
+  const effectiveSidebarCollapsed = isTabletViewport
+    ? tabletManualOverride ?? true
+    : sidebarCollapsed;
+
+  const handleToggleSidebarCollapsed = useCallback(() => {
+    const nextCollapsed = !effectiveSidebarCollapsed;
+    if (isTabletViewport) {
+      setTabletManualOverride(nextCollapsed);
+    }
+    setSidebarCollapsed(nextCollapsed);
+  }, [effectiveSidebarCollapsed, isTabletViewport, setSidebarCollapsed]);
+
+  useEffect(() => {
+    if (currentDestination !== 'tutorial') {
+      lastNonTutorialDestRef.current = currentDestination;
+    }
+  }, [currentDestination]);
+
+  // Responsive viewport listener: close mobile drawer when resizing >= 768px & track tablet range
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const handleResize = () => {
+      const width = window.innerWidth;
+      if (width >= 768) {
+        setMobileDrawerOpen(false);
+      }
+      const nowTablet = width >= 768 && width < 1024;
+      setIsTabletViewport(prev => {
+        if (prev !== nowTablet) {
+          setTabletManualOverride(null);
+        }
+        return nowTablet;
+      });
+    };
+    window.addEventListener('resize', handleResize);
+    return () => window.removeEventListener('resize', handleResize);
+  }, []);
 
   // Check App Lock on start & bind global shortcuts + browser history back navigation
   useEffect(() => {
@@ -93,13 +142,29 @@ export const AppShell: React.FC = () => {
     };
 
     const handleGlobalKey = (e: KeyboardEvent) => {
-      if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {
         e.preventDefault();
         setIsSearchOpen(true);
       }
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'q') {
         e.preventDefault();
         setIsQuickAddOpen(true);
+      }
+      // Cmd/Ctrl + B or Cmd/Ctrl + \ to toggle desktop/tablet sidebar collapse
+      if ((e.metaKey || e.ctrlKey) && (e.key.toLowerCase() === 'b' || e.key === '\\')) {
+        const target = e.target as HTMLElement | null;
+        const isEditable =
+          target instanceof HTMLInputElement ||
+          target instanceof HTMLTextAreaElement ||
+          Boolean(target?.isContentEditable);
+        if (!isEditable || e.key === '\\') {
+          e.preventDefault();
+          if (window.innerWidth < 768) {
+            setMobileDrawerOpen(prev => !prev);
+          } else {
+            handleToggleSidebarCollapsed();
+          }
+        }
       }
       // Alt+1 / Alt+2 / Alt+3 quick navigation between Tasks, Journal, and Calendar
       if (e.altKey && !e.metaKey && !e.ctrlKey) {
@@ -124,13 +189,16 @@ export const AppShell: React.FC = () => {
       window.removeEventListener('popstate', handlePopState);
       window.removeEventListener('keydown', handleGlobalKey);
     };
-  }, [setNavigationView]);
+  }, [setNavigationView, handleToggleSidebarCollapsed]);
 
   const settings = db.getSettings();
   const appName = settings.appName || 'Daycraft';
   const hasUnseenAchievements =
     settings.gamificationEnabled && db.getUnseenAchievementIds().length > 0;
-  const backupReminder = getBackupReminderStatus(settings);
+  const rawBackupReminder = getBackupReminderStatus(settings);
+  const backupReminder = db.hasPersonalActivity()
+    ? rawBackupReminder
+    : { ...rawBackupReminder, isDue: false };
 
   const workspaceCounts = {
     tasks: db.getTasks().filter(t => t.status !== 'completed' && !t.archived).length,
@@ -202,6 +270,14 @@ export const AppShell: React.FC = () => {
         return <InsightsView onNavigate={d => navigateTo(d as Destination)} />;
       case 'achievements':
         return <AchievementsView onNavigate={d => navigateTo(d as Destination)} />;
+      case 'tutorial':
+        return (
+          <TutorialView
+            onNavigate={d => navigateTo(d)}
+            onOpenQuickAdd={() => setIsQuickAddOpen(true)}
+            onClose={() => navigateTo(lastNonTutorialDestRef.current || 'home')}
+          />
+        );
       case 'settings':
         return <SettingsView onNavigate={d => navigateTo(d as Destination)} />;
       default:
@@ -236,53 +312,109 @@ export const AppShell: React.FC = () => {
         onOpenQuickAdd={() => setIsQuickAddOpen(true)}
       />
 
-      {/* Mobile Top Header (Small Screens) */}
+      {/* Mobile Top Header (Small Screens < 768px) */}
       <header
-        className="md:hidden flex items-center justify-between px-4 py-3 border-b sticky top-0 z-30 backdrop-blur-md"
+        className="md:hidden flex items-center justify-between gap-2 px-3.5 py-2.5 border-b sticky top-0 z-30 backdrop-blur-md"
         style={{
           backgroundColor: 'var(--bg-surface-elevated)',
           borderColor: 'var(--border)',
         }}
       >
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 min-w-0">
           <button
+            ref={mobileMenuTriggerRef}
+            type="button"
             onClick={() => setMobileDrawerOpen(true)}
-            aria-label="Open menu drawer"
-            className="p-1.5 rounded-lg border"
-            style={{ borderColor: 'var(--border)' }}
+            aria-label="Open navigation menu"
+            aria-expanded={mobileDrawerOpen}
+            aria-controls="daycraft-mobile-drawer"
+            className="w-9 h-9 rounded-xl border flex items-center justify-center shrink-0 transition-colors cursor-pointer"
+            style={{
+              borderColor: 'var(--border)',
+              backgroundColor: 'var(--bg-surface)',
+              color: 'var(--text-primary)',
+            }}
           >
             <Menu className="w-5 h-5" />
           </button>
-          <div
-            className="flex items-center gap-1.5 font-bold text-sm"
-            style={{ color: 'var(--text-primary)' }}
-          >
-            <Compass className="w-4 h-4 text-amber-600" />
-            <span>{appName}</span>
+          <div className="flex items-center gap-2 min-w-0">
+            <div
+              className="w-7 h-7 rounded-lg flex items-center justify-center shrink-0"
+              style={{
+                backgroundColor: 'var(--accent)',
+                color: 'var(--accent-foreground)',
+              }}
+            >
+              <Compass className="w-4 h-4" />
+            </div>
+            <div className="min-w-0">
+              <div
+                className="font-bold text-sm truncate leading-tight"
+                style={{ color: 'var(--text-primary)' }}
+              >
+                {appName}
+              </div>
+              <div
+                className="text-[10px] font-medium truncate leading-tight"
+                style={{ color: 'var(--text-secondary)' }}
+              >
+                {currentDestination === 'tutorial'
+                  ? 'App Tutorial'
+                  : currentDestination === 'settings'
+                  ? 'Settings'
+                  : NAV_ITEMS.find(item => item.id === currentDestination)?.label || 'Workspace'}
+              </div>
+            </div>
           </div>
         </div>
 
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-1.5 shrink-0">
           <button
+            type="button"
+            onClick={toggleMode}
+            aria-label={`Switch to ${resolvedMode === 'dark' ? 'light' : 'dark'} theme`}
+            className="w-9 h-9 rounded-xl border flex items-center justify-center transition-colors cursor-pointer"
+            style={{
+              borderColor: 'var(--border)',
+              backgroundColor: 'var(--bg-surface)',
+              color: 'var(--text-secondary)',
+            }}
+          >
+            {resolvedMode === 'dark' ? (
+              <Sun className="w-4 h-4" style={{ color: 'var(--warning)' }} />
+            ) : (
+              <Moon className="w-4 h-4" />
+            )}
+          </button>
+          <button
+            type="button"
             onClick={() => setIsSearchOpen(true)}
             aria-label="Search records"
-            className="p-1.5 rounded-lg border text-stone-500"
-            style={{ borderColor: 'var(--border)' }}
+            className="w-9 h-9 rounded-xl border flex items-center justify-center transition-colors cursor-pointer"
+            style={{
+              borderColor: 'var(--border)',
+              backgroundColor: 'var(--bg-surface)',
+              color: 'var(--text-secondary)',
+            }}
           >
             <Search className="w-4 h-4" />
           </button>
           <button
+            type="button"
             onClick={() => setIsQuickAddOpen(true)}
             aria-label="Quick add"
-            className="p-1.5 rounded-lg text-white"
-            style={{ backgroundColor: 'var(--accent)' }}
+            className="w-9 h-9 rounded-xl flex items-center justify-center transition-opacity hover:opacity-95 cursor-pointer"
+            style={{
+              backgroundColor: 'var(--accent)',
+              color: 'var(--accent-foreground)',
+            }}
           >
-            <Plus className="w-4 h-4" />
+            <Plus className="w-4 h-4 stroke-[2.5]" />
           </button>
         </div>
       </header>
 
-      {/* Sidebar Navigation (Desktop + Mobile Drawer) */}
+      {/* Sidebar Navigation (Desktop Expanded + Icon Rail + Mobile Drawer) */}
       <SidebarNavigation
         appName={appName}
         currentDestination={currentDestination}
@@ -295,8 +427,11 @@ export const AppShell: React.FC = () => {
         workspaceCounts={workspaceCounts}
         mobileDrawerOpen={mobileDrawerOpen}
         onCloseMobileDrawer={() => setMobileDrawerOpen(false)}
+        mobileTriggerRef={mobileMenuTriggerRef}
         zenMode={zenMode}
         onToggleZenMode={() => toggleZenMode()}
+        sidebarCollapsed={effectiveSidebarCollapsed}
+        onToggleSidebarCollapsed={handleToggleSidebarCollapsed}
         collapsedGroups={collapsedGroups}
         onToggleGroupCollapsed={toggleGroupCollapsed}
         pinnedDestinations={pinnedDestinations}
@@ -306,7 +441,7 @@ export const AppShell: React.FC = () => {
       />
 
       {/* Main Content Area with Smooth Page Transition */}
-      <main className="flex-1 pb-20 md:pb-6 overflow-y-auto focus:outline-none">
+      <main className="flex-1 min-w-0 pb-20 md:pb-6 overflow-y-auto overflow-x-hidden focus:outline-none">
         <AnimatePresence mode="wait">
           <motion.div
             key={currentDestination}
@@ -314,7 +449,7 @@ export const AppShell: React.FC = () => {
             initial="initial"
             animate="animate"
             exit="exit"
-            className="w-full"
+            className="w-full min-w-0"
           >
             {renderActiveView()}
           </motion.div>
