@@ -16,12 +16,35 @@ import { parseNaturalLanguageInput } from '../../services/nlpParserService';
 import { Task } from '../../domain/models';
 import { formatLocalDate } from '../../services/streakService';
 
+export function getInboxTasks(allTasks: Task[]): Task[] {
+  return allTasks.filter(
+    t => !t.archived && (t.status === 'inbox' || (!t.projectId && !t.dueDate && t.status !== 'completed'))
+  );
+}
+
+export function buildInboxCaptureTask(rawInput: string, referenceDate: Date = new Date()): Task {
+  const parsed = parseNaturalLanguageInput(rawInput, referenceDate);
+  const now = new Date().toISOString();
+  return {
+    id: `t_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+    title: parsed.title,
+    description: '',
+    createdAt: now,
+    updatedAt: now,
+    status: 'inbox',
+    priority: parsed.priority || 'medium',
+    dueDate: parsed.date,
+    dueTime: parsed.time,
+    estimatedMinutes: parsed.durationMinutes,
+    tags: parsed.tags,
+    archived: false,
+  };
+}
+
 export const InboxView: React.FC = () => {
   const { notify } = useNotifications();
   const [, setTick] = useState(0);
   const [quickInput, setQuickInput] = useState('');
-  const [selectedProjectId, setSelectedProjectId] = useState<string>('');
-  const [filterTag, setFilterTag] = useState<string>('');
 
   useEffect(() => {
     return db.subscribe(() => setTick(t => t + 1));
@@ -30,36 +53,19 @@ export const InboxView: React.FC = () => {
   const allTasks = db.getTasks();
   const projects = db.getProjects();
   // Inbox tasks: tasks with status 'inbox' or tasks without project/due date
-  const inboxTasks = allTasks.filter(
-    t => !t.archived && (t.status === 'inbox' || (!t.projectId && !t.dueDate && t.status !== 'completed'))
-  );
+  const inboxTasks = getInboxTasks(allTasks);
 
   const handleQuickSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (!quickInput.trim()) return;
 
-    const parsed = parseNaturalLanguageInput(quickInput);
-    const now = new Date().toISOString();
-
-    const newTask: Task = {
-      id: `t_${Date.now()}`,
-      title: parsed.title,
-      description: '',
-      createdAt: now,
-      updatedAt: now,
-      status: parsed.date ? 'todo' : 'inbox',
-      priority: parsed.priority || 'medium',
-      dueDate: parsed.date,
-      dueTime: parsed.time,
-      estimatedMinutes: parsed.durationMinutes,
-      tags: parsed.tags,
-      archived: false,
-    };
-
+    const newTask = buildInboxCaptureTask(quickInput);
     db.saveTask(newTask);
     notify({
       title: 'Captured to Inbox',
-      message: `"${parsed.title}" saved locally.`,
+      message: newTask.dueDate
+        ? `"${newTask.title}" captured to Inbox (target date: ${newTask.dueDate}).`
+        : `"${newTask.title}" saved to Inbox.`,
       type: 'task',
     });
     setQuickInput('');
@@ -87,6 +93,18 @@ export const InboxView: React.FC = () => {
     notify({
       title: 'Scheduled for Today',
       message: `Moved "${task.title}" to My Day.`,
+      type: 'task',
+    });
+  };
+
+  const confirmParsedSchedule = (task: Task) => {
+    db.saveTask({
+      ...task,
+      status: 'todo',
+    });
+    notify({
+      title: 'Moved to Tasks',
+      message: `Confirmed "${task.title}" for ${task.dueDate}.`,
       type: 'task',
     });
   };
@@ -132,7 +150,7 @@ export const InboxView: React.FC = () => {
         />
         <button
           type="submit"
-          className="px-5 py-3 rounded-xl font-bold text-xs flex items-center gap-1.5 shadow-sm transition-all hover:brightness-105 active:scale-98"
+          className="px-5 py-3 rounded-xl font-bold text-xs flex items-center gap-1.5 shadow-sm transition-all hover:brightness-105 active:scale-98 cursor-pointer"
           style={{
             backgroundColor: 'var(--accent)',
             color: 'var(--accent-foreground)',
@@ -166,9 +184,27 @@ export const InboxView: React.FC = () => {
             {inboxTasks.map(task => (
               <div key={task.id} className="p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3 group">
                 <div className="min-w-0">
-                  <h3 className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>
-                    {task.title}
-                  </h3>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <h3 className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>
+                      {task.title}
+                    </h3>
+                    {task.dueDate && (
+                      <span
+                        className="text-[10px] font-semibold px-2 py-0.5 rounded-md border flex items-center gap-1"
+                        style={{
+                          borderColor: 'var(--accent)',
+                          backgroundColor: 'var(--accent-subtle)',
+                          color: 'var(--accent)',
+                        }}
+                      >
+                        <Calendar className="w-3 h-3" />
+                        <span>
+                          {task.dueDate}
+                          {task.dueTime ? ` at ${task.dueTime}` : ''}
+                        </span>
+                      </span>
+                    )}
+                  </div>
                   {task.tags && task.tags.length > 0 && (
                     <div className="flex gap-1.5 mt-1">
                       {task.tags.map(t => (
@@ -182,9 +218,23 @@ export const InboxView: React.FC = () => {
 
                 {/* Quick actions for classifying */}
                 <div className="flex flex-wrap items-center gap-2 shrink-0">
+                  {task.dueDate && (
+                    <button
+                      onClick={() => confirmParsedSchedule(task)}
+                      className="flex items-center gap-1 px-2.5 py-1 rounded-lg border text-xs font-medium hover:opacity-80 cursor-pointer"
+                      style={{
+                        borderColor: 'var(--accent)',
+                        backgroundColor: 'var(--accent-subtle)',
+                        color: 'var(--accent)',
+                      }}
+                    >
+                      <CheckCircle2 className="w-3.5 h-3.5" />
+                      <span>Confirm Date</span>
+                    </button>
+                  )}
                   <button
                     onClick={() => scheduleForToday(task)}
-                    className="flex items-center gap-1 px-2.5 py-1 rounded-lg border text-xs font-medium hover:opacity-80"
+                    className="flex items-center gap-1 px-2.5 py-1 rounded-lg border text-xs font-medium hover:opacity-80 cursor-pointer"
                     style={{ borderColor: 'var(--border)', backgroundColor: 'var(--bg-surface)' }}
                   >
                     <Calendar className="w-3.5 h-3.5 text-sky-500" />
@@ -206,7 +256,7 @@ export const InboxView: React.FC = () => {
                   <button
                     onClick={() => deleteTask(task.id)}
                     aria-label={`Delete task: ${task.title}`}
-                    className="p-1.5 rounded-lg text-stone-400 hover:text-red-500 transition-colors"
+                    className="p-1.5 rounded-lg text-stone-400 hover:text-red-500 transition-colors cursor-pointer"
                   >
                     <Trash2 className="w-4 h-4" />
                   </button>

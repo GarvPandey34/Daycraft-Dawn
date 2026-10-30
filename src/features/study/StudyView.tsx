@@ -12,7 +12,44 @@ import {
 import { db } from '../../database/db';
 import { useNotifications } from '../../notifications/NotificationContext';
 import { StudySession, StudySubject } from '../../domain/models';
-import { formatLocalDate } from '../../services/streakService';
+import { addDays, formatLocalDate } from '../../services/streakService';
+
+export interface SubjectStudyStats {
+  weeklyMinutes: number;
+  weeklyHours: number;
+  allTimeMinutes: number;
+  allTimeHours: number;
+  weeklyProgressPct: number;
+  weeklySessionCount: number;
+  totalSessionCount: number;
+}
+
+export function calculateSubjectStudyStats(
+  sessions: StudySession[],
+  subjectId: string,
+  weeklyGoalHours: number,
+  todayStr: string = formatLocalDate(new Date())
+): SubjectStudyStats {
+  const weekStartStr = addDays(todayStr, -6);
+  const subSessions = sessions.filter(s => s.subjectId === subjectId);
+  const weeklySessions = subSessions.filter(s => s.date >= weekStartStr && s.date <= todayStr);
+  const weeklyMinutes = weeklySessions.reduce((acc, s) => acc + s.durationMinutes, 0);
+  const allTimeMinutes = subSessions.reduce((acc, s) => acc + s.durationMinutes, 0);
+  const weeklyHours = Math.round((weeklyMinutes / 60) * 10) / 10;
+  const allTimeHours = Math.round((allTimeMinutes / 60) * 10) / 10;
+  const targetMinutes = Math.max(1, weeklyGoalHours * 60);
+  const weeklyProgressPct = Math.min(100, Math.round((weeklyMinutes / targetMinutes) * 100));
+
+  return {
+    weeklyMinutes,
+    weeklyHours,
+    allTimeMinutes,
+    allTimeHours,
+    weeklyProgressPct,
+    weeklySessionCount: weeklySessions.length,
+    totalSessionCount: subSessions.length,
+  };
+}
 
 export const StudyView: React.FC = () => {
   const { notify } = useNotifications();
@@ -94,7 +131,10 @@ export const StudyView: React.FC = () => {
     notify({ title: 'Subject Removed', message: 'Subject and records deleted.', type: 'system' });
   };
 
-  const totalStudyMinutes = sessions.reduce((acc, s) => acc + s.durationMinutes, 0);
+  const deleteSession = (id: string) => {
+    db.deleteStudySession(id);
+    notify({ title: 'Study Session Deleted', message: 'Session record removed.', type: 'system' });
+  };
 
   return (
     <div className="p-6 max-w-5xl mx-auto space-y-6">
@@ -114,7 +154,7 @@ export const StudyView: React.FC = () => {
         <div className="flex items-center gap-2">
           <button
             onClick={() => setIsLoggingSession(true)}
-            className="flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-semibold border shadow-xs"
+            className="flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-semibold border shadow-xs cursor-pointer"
             style={{ backgroundColor: 'var(--bg-surface-elevated)', borderColor: 'var(--border)' }}
           >
             <Clock className="w-3.5 h-3.5 text-indigo-500" />
@@ -122,7 +162,7 @@ export const StudyView: React.FC = () => {
           </button>
           <button
             onClick={() => setIsCreatingSubject(true)}
-            className="flex items-center gap-1.5 px-4 py-2 rounded-xl text-xs font-bold shadow-sm transition-all hover:brightness-105 active:scale-98"
+            className="flex items-center gap-1.5 px-4 py-2 rounded-xl text-xs font-bold shadow-sm transition-all hover:brightness-105 active:scale-98 cursor-pointer"
             style={{ backgroundColor: 'var(--accent)', color: 'var(--accent-foreground)' }}
           >
             <Plus className="w-4 h-4" />
@@ -190,14 +230,14 @@ export const StudyView: React.FC = () => {
             <button
               type="button"
               onClick={() => setIsCreatingSubject(false)}
-              className="px-3 py-1.5 rounded-lg border text-xs"
+              className="px-3 py-1.5 rounded-lg border text-xs cursor-pointer"
               style={{ borderColor: 'var(--border)' }}
             >
               Cancel
             </button>
             <button
               type="submit"
-              className="px-4 py-1.5 rounded-lg text-xs font-semibold shadow-xs"
+              className="px-4 py-1.5 rounded-lg text-xs font-semibold shadow-xs cursor-pointer"
               style={{ backgroundColor: 'var(--accent)', color: 'var(--accent-foreground)' }}
             >
               Save Subject
@@ -266,18 +306,32 @@ export const StudyView: React.FC = () => {
             />
           </div>
 
+          <div>
+            <label className="block text-xs font-semibold mb-1" style={{ color: 'var(--text-secondary)' }}>
+              Session Notes / Key Takeaways
+            </label>
+            <textarea
+              rows={2}
+              value={sessionNotes}
+              onChange={e => setSessionNotes(e.target.value)}
+              placeholder="Optional summary, formulas, or questions for next review..."
+              className="w-full px-3 py-2 rounded-lg border text-sm resize-none"
+              style={{ backgroundColor: 'var(--bg-surface)', borderColor: 'var(--border)' }}
+            />
+          </div>
+
           <div className="flex justify-end gap-2 pt-2 border-t" style={{ borderColor: 'var(--border)' }}>
             <button
               type="button"
               onClick={() => setIsLoggingSession(false)}
-              className="px-3 py-1.5 rounded-lg border text-xs"
+              className="px-3 py-1.5 rounded-lg border text-xs cursor-pointer"
               style={{ borderColor: 'var(--border)' }}
             >
               Cancel
             </button>
             <button
               type="submit"
-              className="px-4 py-1.5 rounded-lg text-xs font-semibold shadow-xs"
+              className="px-4 py-1.5 rounded-lg text-xs font-semibold shadow-xs cursor-pointer"
               style={{ backgroundColor: 'var(--accent)', color: 'var(--accent-foreground)' }}
             >
               Commit Session
@@ -289,8 +343,7 @@ export const StudyView: React.FC = () => {
       {/* Subjects Grid */}
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
         {subjects.map(sub => {
-          const subSessions = sessions.filter(s => s.subjectId === sub.id);
-          const totalMins = subSessions.reduce((acc, s) => acc + s.durationMinutes, 0);
+          const stats = calculateSubjectStudyStats(sessions, sub.id, sub.weeklyGoalHours, todayStr);
 
           return (
             <div
@@ -312,15 +365,26 @@ export const StudyView: React.FC = () => {
                 <button
                   onClick={() => deleteSubject(sub.id)}
                   title="Delete subject"
-                  className="p-1 text-stone-400 hover:text-red-500 transition-colors"
+                  className="p-1 text-stone-400 hover:text-red-500 transition-colors cursor-pointer"
                 >
                   <Trash2 className="w-4 h-4" />
                 </button>
               </div>
 
-              <div className="flex justify-between text-xs font-semibold" style={{ color: 'var(--text-secondary)' }}>
-                <span>Target: {sub.weeklyGoalHours}h / week</span>
-                <span>Logged: {Math.round((totalMins / 60) * 10) / 10}h ({subSessions.length} sessions)</span>
+              <div className="space-y-1.5">
+                <div className="flex justify-between text-xs font-semibold" style={{ color: 'var(--text-secondary)' }}>
+                  <span>This Week: {stats.weeklyHours}h / {sub.weeklyGoalHours}h target</span>
+                  <span>All-Time: {stats.allTimeHours}h ({stats.totalSessionCount} sessions)</span>
+                </div>
+                <div className="w-full h-2 rounded-full bg-black/10 overflow-hidden">
+                  <div
+                    className="h-full rounded-full transition-all"
+                    style={{
+                      width: `${stats.weeklyProgressPct}%`,
+                      backgroundColor: 'var(--accent)',
+                    }}
+                  />
+                </div>
               </div>
 
               {sub.topics && sub.topics.length > 0 && (
@@ -360,16 +424,32 @@ export const StudyView: React.FC = () => {
             {sessions.slice(-8).reverse().map(s => {
               const sub = subjects.find(sub => sub.id === s.subjectId);
               return (
-                <div key={s.id} className="py-2.5 flex items-center justify-between">
-                  <div>
+                <div key={s.id} className="py-2.5 flex items-center justify-between gap-3">
+                  <div className="min-w-0">
                     <span className="font-semibold block">{s.topic || sub?.name || 'Study session'}</span>
-                    <span className="text-[11px]" style={{ color: 'var(--text-muted)' }}>
+                    <span className="text-[11px] block" style={{ color: 'var(--text-muted)' }}>
                       {s.date} • {sub?.name}
                     </span>
+                    {s.notes && (
+                      <p className="text-[11px] mt-0.5 italic" style={{ color: 'var(--text-secondary)' }}>
+                        {s.notes}
+                      </p>
+                    )}
                   </div>
-                  <span className="font-bold font-mono px-2 py-0.5 rounded border" style={{ borderColor: 'var(--border)' }}>
-                    {s.durationMinutes}m
-                  </span>
+                  <div className="flex items-center gap-2 shrink-0">
+                    <span className="font-bold font-mono px-2 py-0.5 rounded border" style={{ borderColor: 'var(--border)' }}>
+                      {s.durationMinutes}m
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => deleteSession(s.id)}
+                      title="Delete study session"
+                      aria-label={`Delete study session ${s.topic || sub?.name || s.id}`}
+                      className="p-1 rounded-md text-stone-400 hover:text-red-500 transition-colors cursor-pointer"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
                 </div>
               );
             })}

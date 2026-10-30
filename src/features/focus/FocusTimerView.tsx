@@ -51,26 +51,45 @@ import { DeviceFocusMode } from '../../domain/models';
 import { useMotionPreference, MOTION_SPRINGS } from '../../theme/motion';
 import { AudioVisualizer } from './AudioVisualizer';
 import { AnimatedCheckbox, EmptyStateMotion } from '../../components/MotionPrimitives';
+import { formatLocalDate } from '../../services/streakService';
+import {
+  clearFocusTimerState,
+  createNewFocusSessionId,
+  filterTodayFocusSessions,
+  reconcileExpiredFocusTimer,
+  resolveRestoredFocusTimerState,
+  saveFocusTimerState,
+  subscribeFocusTimerCompletion,
+} from '../../services/focusTimerStateService';
 
 export const FocusTimerView: React.FC = () => {
   const { notify, triggerCelebration } = useNotifications();
   const settings = db.getSettings();
   const { isReduced, allowAmbient, variants, tactileProps, cardHoverProps } = useMotionPreference();
 
+  const initialTimerState = useRef(
+    resolveRestoredFocusTimerState(settings.defaultFocusDurationMinutes || 25)
+  ).current;
+  const sessionIdRef = useRef<string>(initialTimerState.sessionId);
+
   // Timer states
-  const [sessionType, setSessionType] = useState<'focus' | 'short_break' | 'long_break'>('focus');
-  const [durationMinutes, setDurationMinutes] = useState(settings.defaultFocusDurationMinutes || 25);
-  const [customInputMins, setCustomInputMins] = useState(settings.defaultFocusDurationMinutes || 25);
-  const [isCustomMode, setIsCustomMode] = useState(false);
-  const [secondsRemaining, setSecondsRemaining] = useState((settings.defaultFocusDurationMinutes || 25) * 60);
-  const [isActive, setIsActive] = useState(false);
-  const [isPaused, setIsPaused] = useState(false);
+  const [sessionType, setSessionType] = useState<'focus' | 'short_break' | 'long_break'>(
+    initialTimerState.sessionType
+  );
+  const [durationMinutes, setDurationMinutes] = useState(initialTimerState.durationMinutes);
+  const [customInputMins, setCustomInputMins] = useState(initialTimerState.customInputMins);
+  const [isCustomMode, setIsCustomMode] = useState(initialTimerState.isCustomMode);
+  const [secondsRemaining, setSecondsRemaining] = useState(initialTimerState.secondsRemaining);
+  const [isActive, setIsActive] = useState(initialTimerState.isActive);
+  const [isPaused, setIsPaused] = useState(initialTimerState.isPaused);
   const [justCompleted, setJustCompleted] = useState(false);
-  const [sessionTaskNote, setSessionTaskNote] = useState('');
+  const [sessionTaskNote, setSessionTaskNote] = useState(initialTimerState.sessionTaskNote);
 
   // Device mode & distraction control states
   const [showDevicePrompt, setShowDevicePrompt] = useState(false);
-  const [activeDeviceMode, setActiveDeviceMode] = useState<DeviceFocusMode | null>(null);
+  const [activeDeviceMode, setActiveDeviceMode] = useState<DeviceFocusMode | null>(
+    initialTimerState.activeDeviceMode
+  );
   const [appliedDeviceResult, setAppliedDeviceResult] = useState<AppliedDeviceResult | null>(null);
   const [restoredFeedbackMsg, setRestoredFeedbackMsg] = useState<string | null>(null);
   const [promptRememberChoice, setPromptRememberChoice] = useState(false);
@@ -110,7 +129,36 @@ export const FocusTimerView: React.FC = () => {
     restoredMessage?: string;
   } | null>(null);
 
-  const targetEndTimeRef = useRef<number | null>(null);
+  const targetEndTimeRef = useRef<number | null>(initialTimerState.targetEndTime);
+
+  // Persist active or paused timer state across view switches & reloads
+  useEffect(() => {
+    saveFocusTimerState({
+      sessionId: sessionIdRef.current,
+      sessionType,
+      durationMinutes,
+      customInputMins,
+      isCustomMode,
+      secondsRemaining,
+      isActive,
+      isPaused,
+      targetEndTime: isActive
+        ? targetEndTimeRef.current || Date.now() + secondsRemaining * 1000
+        : null,
+      sessionTaskNote,
+      activeDeviceMode,
+    });
+  }, [
+    sessionType,
+    durationMinutes,
+    customInputMins,
+    isCustomMode,
+    secondsRemaining,
+    isActive,
+    isPaused,
+    sessionTaskNote,
+    activeDeviceMode,
+  ]);
 
   // Keep mixer UI synchronized with soundService
   useEffect(() => {
@@ -140,12 +188,47 @@ export const FocusTimerView: React.FC = () => {
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [showDevicePrompt, completedSummary]);
 
+  // Synchronize local state if global focus timer reconciliation completes the session
+  useEffect(() => {
+    return subscribeFocusTimerCompletion(result => {
+      sessionIdRef.current = result.nextState.sessionId;
+      targetEndTimeRef.current = null;
+      setIsActive(false);
+      setIsPaused(false);
+      setJustCompleted(true);
+      setActiveDeviceMode(null);
+      setAppliedDeviceResult(null);
+      setSessionType(result.nextState.sessionType);
+      setDurationMinutes(result.nextState.durationMinutes);
+      setCustomInputMins(result.nextState.customInputMins);
+      setIsCustomMode(result.nextState.isCustomMode);
+      setSecondsRemaining(result.nextState.secondsRemaining);
+
+      if (result.completed && result.sessionType === 'focus') {
+        setCompletedSummary({
+          duration: result.durationMinutes,
+          notes: result.notes || 'Deep Focus Sprint',
+          xp: result.xpAwarded,
+        });
+      }
+    });
+  }, []);
+
   useEffect(() => {
     let interval: NodeJS.Timeout | null = null;
 
     if (isActive) {
       if (!targetEndTimeRef.current) {
         targetEndTimeRef.current = Date.now() + secondsRemaining * 1000;
+      } else {
+        const immediateRemaining = Math.max(
+          0,
+          Math.round((targetEndTimeRef.current - Date.now()) / 1000)
+        );
+        if (immediateRemaining <= 0) {
+          handleComplete();
+          return;
+        }
       }
 
       interval = setInterval(() => {
@@ -258,6 +341,8 @@ export const FocusTimerView: React.FC = () => {
     setIsPaused(false);
     setJustCompleted(false);
     targetEndTimeRef.current = null;
+    sessionIdRef.current = createNewFocusSessionId();
+    clearFocusTimerState();
     setSecondsRemaining(durationMinutes * 60);
 
     if (activeDeviceMode) {
@@ -332,13 +417,30 @@ export const FocusTimerView: React.FC = () => {
   };
 
   const handleComplete = async () => {
-    setIsActive(false);
-    setIsPaused(false);
-    setJustCompleted(true);
-    targetEndTimeRef.current = null;
-    soundService.playTimerBell(settings.soundVolume);
+    // Ensure latest in-memory state is persisted before reconciling completion
+    saveFocusTimerState({
+      sessionId: sessionIdRef.current,
+      sessionType,
+      durationMinutes,
+      customInputMins,
+      isCustomMode,
+      secondsRemaining: 0,
+      isActive: true,
+      isPaused: false,
+      targetEndTime: targetEndTimeRef.current ?? Date.now(),
+      sessionTaskNote,
+      activeDeviceMode,
+    });
 
     let restoredMsg: string | undefined;
+    const result = reconcileExpiredFocusTimer({
+      forceComplete: true,
+      database: db,
+      onPlaySound: vol => soundService.playTimerBell(vol),
+      onNotify: notify,
+      onCelebrate: triggerCelebration,
+    });
+
     if (activeDeviceMode) {
       const deviceSettings = settings.focusDeviceSettings || deviceModeService.getDefaultSettings();
       const restoreRes = await deviceModeService.restorePreviousMode(
@@ -352,52 +454,13 @@ export const FocusTimerView: React.FC = () => {
       }
     }
 
-    if (sessionType === 'focus') {
-      const outcome = db.recordFocusSession({
-        id: `fs_${Date.now()}`,
-        startTime: new Date(Date.now() - durationMinutes * 60000).toISOString(),
-        endTime: new Date().toISOString(),
-        durationMinutes,
-        type: 'focus',
-        completed: true,
-        notes: sessionTaskNote || 'Custom focus sprint',
-      });
-
-      notify({
-        title: 'Focus Sprint Completed!',
-        message:
-          outcome.xpAwarded > 0
-            ? `Finished ${durationMinutes} minutes (+${outcome.xpAwarded} XP)`
-            : `Finished ${durationMinutes} minutes`,
-        type: 'focus',
-      });
-      triggerCelebration();
-
-      // Show summary dialog
+    if (result && result.completed && result.sessionType === 'focus' && restoredMsg) {
       setCompletedSummary({
-        duration: durationMinutes,
-        notes: sessionTaskNote || 'Deep Focus Sprint',
-        xp: outcome.xpAwarded,
+        duration: result.durationMinutes,
+        notes: result.notes || 'Deep Focus Sprint',
+        xp: result.xpAwarded,
         restoredMessage: restoredMsg,
       });
-
-      // Prepare break duration without auto-starting unless user chooses
-      const breakMins = settings.defaultShortBreakMinutes || 5;
-      setSessionType('short_break');
-      setDurationMinutes(breakMins);
-      setCustomInputMins(breakMins);
-      setSecondsRemaining(breakMins * 60);
-    } else {
-      notify({
-        title: 'Break Finished',
-        message: 'Recharged and ready to focus?',
-        type: 'reminder',
-      });
-      const focusMins = settings.defaultFocusDurationMinutes || 25;
-      setSessionType('focus');
-      setDurationMinutes(focusMins);
-      setCustomInputMins(focusMins);
-      setSecondsRemaining(focusMins * 60);
     }
   };
 
@@ -475,8 +538,8 @@ export const FocusTimerView: React.FC = () => {
 
   const allSessions = db.getFocusSessions();
   const pastSessions = allSessions.slice(-5).reverse();
-  const todayIsoPrefix = new Date().toISOString().slice(0, 10);
-  const todaySessions = allSessions.filter(s => s.completed && s.startTime.startsWith(todayIsoPrefix));
+  const todayLocalDate = formatLocalDate(new Date());
+  const todaySessions = filterTodayFocusSessions(allSessions, todayLocalDate);
   const todayTotalMinutes = todaySessions.reduce((acc, s) => acc + s.durationMinutes, 0);
 
   const activeTrackItems = AMBIENT_TRACK_LIST.filter(t => Boolean(activeSounds[t.id]));

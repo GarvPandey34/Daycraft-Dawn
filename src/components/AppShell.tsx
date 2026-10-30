@@ -30,6 +30,9 @@ import {
 import { getBackupReminderStatus } from '../services/workflowConnectService';
 import { fileSystemAdapter } from '../platform/adapters';
 import { useNotifications } from '../notifications/NotificationContext';
+import { reconcileExpiredFocusTimer } from '../services/focusTimerStateService';
+import { soundService } from '../services/soundService';
+import { deviceModeService } from '../services/deviceModeService';
 
 // Destination views
 import { HomeDashboard } from '../features/home/HomeDashboard';
@@ -54,7 +57,7 @@ export type { Destination } from './navigationState';
 export const AppShell: React.FC = () => {
   const { toggleMode, resolvedMode } = useTheme();
   const { isReduced, variants } = useMotionPreference();
-  const { notify } = useNotifications();
+  const { notify, triggerCelebration } = useNotifications();
   const {
     currentDestination,
     zenMode,
@@ -96,6 +99,42 @@ export const AppShell: React.FC = () => {
       lastNonTutorialDestRef.current = currentDestination;
     }
   }, [currentDestination]);
+
+  // Global focus timer expiration watcher so sessions complete reliably even when viewing other screens
+  useEffect(() => {
+    const checkExpiredTimer = () => {
+      reconcileExpiredFocusTimer({
+        database: db,
+        onPlaySound: vol => soundService.playTimerBell(vol),
+        onNotify: notify,
+        onCelebrate: triggerCelebration,
+        onRestoreDeviceMode: async () => {
+          const currentSettings = db.getSettings();
+          const deviceSettings =
+            currentSettings.focusDeviceSettings || deviceModeService.getDefaultSettings();
+          await deviceModeService.restorePreviousMode(
+            deviceSettings.restoreAfterFocus ?? deviceSettings.restorePreviousMode ?? true
+          );
+        },
+      });
+    };
+
+    checkExpiredTimer();
+    const interval = setInterval(checkExpiredTimer, 500);
+    const handleVisibilityOrFocus = () => {
+      if (typeof document === 'undefined' || document.visibilityState === 'visible') {
+        checkExpiredTimer();
+      }
+    };
+    window.addEventListener('focus', handleVisibilityOrFocus);
+    document.addEventListener('visibilitychange', handleVisibilityOrFocus);
+
+    return () => {
+      clearInterval(interval);
+      window.removeEventListener('focus', handleVisibilityOrFocus);
+      document.removeEventListener('visibilitychange', handleVisibilityOrFocus);
+    };
+  }, [notify, triggerCelebration]);
 
   // Responsive viewport listener: close mobile drawer when resizing >= 768px & track tablet range
   useEffect(() => {

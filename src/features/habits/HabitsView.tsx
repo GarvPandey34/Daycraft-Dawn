@@ -23,6 +23,40 @@ import { soundService } from '../../services/soundService';
 import { useMotionPreference } from '../../theme/motion';
 import { AnimatedCheckbox, EmptyStateMotion } from '../../components/MotionPrimitives';
 
+export interface RoutineCascadeState {
+  runningRoutineId: string | null;
+  cascadeStepIndex: number;
+  routineFinished: boolean;
+}
+
+export function reconcileRoutineCascadeState(
+  state: RoutineCascadeState,
+  activeRoutineExists: boolean,
+  validHabitCount: number
+): RoutineCascadeState {
+  if (!state.runningRoutineId) {
+    return state;
+  }
+  if (!activeRoutineExists || validHabitCount <= 0) {
+    return {
+      runningRoutineId: null,
+      cascadeStepIndex: 0,
+      routineFinished: false,
+    };
+  }
+  if (state.routineFinished) {
+    return state;
+  }
+  const clampedIndex = Math.min(Math.max(0, state.cascadeStepIndex), validHabitCount - 1);
+  if (clampedIndex !== state.cascadeStepIndex) {
+    return {
+      ...state,
+      cascadeStepIndex: clampedIndex,
+    };
+  }
+  return state;
+}
+
 export const HabitsView: React.FC = () => {
   const { notify, triggerCelebration } = useNotifications();
   const { variants, tactileProps, cardHoverProps } = useMotionPreference();
@@ -136,6 +170,34 @@ export const HabitsView: React.FC = () => {
     notify({ title: 'Habit Removed', message: 'Habit and history deleted.', type: 'system' });
   };
 
+  const deleteRoutine = (id: string) => {
+    if (runningRoutineId === id) {
+      setRunningRoutineId(null);
+      setRoutineFinished(false);
+    }
+    db.deleteHabitRoutine(id);
+    notify({ title: 'Routine Stack Removed', message: 'Routine stack deleted.', type: 'system' });
+  };
+
+  const cycleDayStatus = (habit: Habit, dateStr: string) => {
+    const occ = occurrences.find(o => o.habitId === habit.id && o.date === dateStr);
+    const isComplete = Boolean(occ && occ.recordedValue >= habit.targetValue && occ.status === 'completed');
+    const isSkipped = occ?.status === 'skipped';
+
+    if (!isComplete && !isSkipped) {
+      recordValue(habit, dateStr, habit.targetValue);
+    } else if (isComplete) {
+      excuseDay(habit, dateStr);
+    } else {
+      db.deleteHabitOccurrence(habit.id, dateStr);
+      notify({
+        title: 'Habit Log Cleared',
+        message: `Reset "${habit.name}" on ${dateStr}.`,
+        type: 'system',
+      });
+    }
+  };
+
   // Routine Stack Management
   const handleCreateRoutine = (e: React.FormEvent) => {
     e.preventDefault();
@@ -159,7 +221,18 @@ export const HabitsView: React.FC = () => {
 
   const startRoutineCascade = (routineId: string) => {
     const routine = routines.find(r => r.id === routineId);
-    if (!routine || routine.habitIds.length === 0) return;
+    if (!routine) return;
+    const validHabits = routine.habitIds
+      .map(id => habits.find(h => h.id === id))
+      .filter((h): h is Habit => Boolean(h));
+    if (validHabits.length === 0) {
+      notify({
+        title: 'Routine Stack Empty',
+        message: 'Add at least one active habit to run this routine.',
+        type: 'system',
+      });
+      return;
+    }
     setRunningRoutineId(routineId);
     setCascadeStepIndex(0);
     setRoutineFinished(false);
@@ -171,14 +244,22 @@ export const HabitsView: React.FC = () => {
     const routine = routines.find(r => r.id === runningRoutineId);
     if (!routine) return;
 
-    const currentHabitId = routine.habitIds[cascadeStepIndex];
-    const currentHabit = habits.find(h => h.id === currentHabitId);
+    const validHabits = routine.habitIds
+      .map(id => habits.find(h => h.id === id))
+      .filter((h): h is Habit => Boolean(h));
+    if (validHabits.length === 0) {
+      setRunningRoutineId(null);
+      return;
+    }
+
+    const clampedStepIndex = Math.min(Math.max(0, cascadeStepIndex), validHabits.length - 1);
+    const currentHabit = validHabits[clampedStepIndex];
     if (currentHabit) {
       recordValue(currentHabit, todayStr, currentHabit.targetValue);
     }
 
-    if (cascadeStepIndex < routine.habitIds.length - 1) {
-      setCascadeStepIndex(prev => prev + 1);
+    if (clampedStepIndex < validHabits.length - 1) {
+      setCascadeStepIndex(clampedStepIndex + 1);
     } else {
       const outcome = db.recordRoutineCompletion(routine.id, todayStr);
       setRoutineFinished(true);
@@ -199,8 +280,20 @@ export const HabitsView: React.FC = () => {
     const routine = routines.find(r => r.id === runningRoutineId);
     if (!routine) return;
 
-    if (cascadeStepIndex < routine.habitIds.length - 1) {
-      setCascadeStepIndex(prev => prev + 1);
+    const validHabits = routine.habitIds
+      .map(id => habits.find(h => h.id === id))
+      .filter((h): h is Habit => Boolean(h));
+
+    if (validHabits.length === 0) {
+      setRunningRoutineId(null);
+      setCascadeStepIndex(0);
+      setRoutineFinished(false);
+      return;
+    }
+
+    const clampedStepIndex = Math.min(Math.max(0, cascadeStepIndex), validHabits.length - 1);
+    if (clampedStepIndex < validHabits.length - 1) {
+      setCascadeStepIndex(clampedStepIndex + 1);
     } else {
       setRunningRoutineId(null);
     }
@@ -208,9 +301,37 @@ export const HabitsView: React.FC = () => {
 
   const activeRoutine = runningRoutineId ? routines.find(r => r.id === runningRoutineId) : null;
   const activeRoutineHabits = activeRoutine
-    ? activeRoutine.habitIds.map(id => habits.find(h => h.id === id)).filter(Boolean) as Habit[]
+    ? activeRoutine.habitIds.map(id => habits.find(h => h.id === id)).filter((h): h is Habit => Boolean(h))
     : [];
-  const currentCascadeHabit = activeRoutineHabits[cascadeStepIndex];
+  const reconciledCascade = reconcileRoutineCascadeState(
+    { runningRoutineId, cascadeStepIndex, routineFinished },
+    Boolean(activeRoutine),
+    activeRoutineHabits.length
+  );
+  const effectiveCascadeStepIndex = reconciledCascade.cascadeStepIndex;
+  const currentCascadeHabit =
+    reconciledCascade.runningRoutineId && !reconciledCascade.routineFinished
+      ? activeRoutineHabits[effectiveCascadeStepIndex] || null
+      : null;
+
+  useEffect(() => {
+    if (reconciledCascade.runningRoutineId !== runningRoutineId) {
+      setRunningRoutineId(reconciledCascade.runningRoutineId);
+    }
+    if (reconciledCascade.cascadeStepIndex !== cascadeStepIndex) {
+      setCascadeStepIndex(reconciledCascade.cascadeStepIndex);
+    }
+    if (reconciledCascade.routineFinished !== routineFinished) {
+      setRoutineFinished(reconciledCascade.routineFinished);
+    }
+  }, [
+    reconciledCascade.runningRoutineId,
+    reconciledCascade.cascadeStepIndex,
+    reconciledCascade.routineFinished,
+    runningRoutineId,
+    cascadeStepIndex,
+    routineFinished,
+  ]);
 
   // Generate last 7 days window for mini heatmap
   const past7Days: string[] = [];
@@ -262,7 +383,7 @@ export const HabitsView: React.FC = () => {
 
       {/* ACTIVE ROUTINE CASCADE RUNNER MODAL / HERO */}
       <AnimatePresence initial={false}>
-        {activeRoutine && (
+        {activeRoutine && reconciledCascade.runningRoutineId && activeRoutineHabits.length > 0 && (
           <motion.div
             variants={variants.statusBanner}
             initial="initial"
@@ -284,7 +405,7 @@ export const HabitsView: React.FC = () => {
                   <div className="flex items-center gap-2">
                     <h2 className="text-base font-bold">{activeRoutine.name}</h2>
                     <span className="text-[10px] px-2 py-0.5 rounded-full font-bold uppercase bg-amber-50 text-amber-700 border border-amber-200">
-                      Step {cascadeStepIndex + 1} of {activeRoutineHabits.length}
+                      Step {effectiveCascadeStepIndex + 1} of {activeRoutineHabits.length}
                     </span>
                   </div>
                   <p className="text-xs" style={{ color: 'var(--text-secondary)' }}>
@@ -304,8 +425,8 @@ export const HabitsView: React.FC = () => {
             {/* Ordered Chain Cascade Tracker */}
             <div className="flex flex-wrap items-center gap-2 p-3 rounded-xl border bg-black/5" style={{ borderColor: 'var(--border)' }}>
               {activeRoutineHabits.map((h, idx) => {
-                const isPast = idx < cascadeStepIndex;
-                const isCurrent = idx === cascadeStepIndex;
+                const isPast = idx < effectiveCascadeStepIndex;
+                const isCurrent = idx === effectiveCascadeStepIndex;
                 const occ = occurrences.find(o => o.habitId === h.id && o.date === todayStr);
                 const isDone = occ && occ.recordedValue >= h.targetValue;
 
@@ -446,9 +567,20 @@ export const HabitsView: React.FC = () => {
                     </div>
                   </div>
 
-                  <span className="text-xs font-mono tabular-nums" style={{ color: 'var(--text-muted)' }}>
-                    {routine.completionsCount} completions
-                  </span>
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs font-mono tabular-nums" style={{ color: 'var(--text-muted)' }}>
+                      {routine.completionsCount} completions
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => deleteRoutine(routine.id)}
+                      title="Delete routine stack"
+                      aria-label={`Delete routine stack ${routine.name}`}
+                      className="p-1 rounded-md hover:bg-red-50 dark:hover:bg-red-950/30 text-stone-400 hover:text-red-500 transition-colors cursor-pointer"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
                 </div>
 
                 {/* Habit Cascade Preview */}
@@ -838,14 +970,23 @@ export const HabitsView: React.FC = () => {
                   <div className="grid grid-cols-7 gap-2">
                     {past7Days.map(dateStr => {
                       const occ = occurrences.find(o => o.habitId === habit.id && o.date === dateStr);
-                      const isComplete = occ && occ.recordedValue >= habit.targetValue;
+                      const isComplete = Boolean(occ && occ.recordedValue >= habit.targetValue && occ.status === 'completed');
                       const isSkipped = occ?.status === 'skipped';
                       const isToday = dateStr === todayStr;
+                      const actionLabel = isComplete
+                        ? 'Click to mark as excused rest day'
+                        : isSkipped
+                        ? 'Click to clear log'
+                        : 'Click to mark completed';
 
                       return (
-                        <div
+                        <button
                           key={dateStr}
-                          className="flex flex-col items-center p-2 rounded-xl border text-center transition-all"
+                          type="button"
+                          onClick={() => cycleDayStatus(habit, dateStr)}
+                          title={actionLabel}
+                          aria-label={`${habit.name} on ${dateStr}: ${actionLabel}`}
+                          className="flex flex-col items-center p-2 rounded-xl border text-center transition-all hover:brightness-95 cursor-pointer"
                           style={{
                             backgroundColor: isComplete
                               ? 'var(--success-subtle)'
@@ -866,23 +1007,21 @@ export const HabitsView: React.FC = () => {
                             {dateStr.split('-')[2]}
                           </span>
 
-                          <div className="mt-1 flex gap-1">
+                          <div className="mt-1 flex gap-1 items-center justify-center h-5">
                             {isComplete ? (
                               <Check className="w-4 h-4 text-emerald-600" />
                             ) : isSkipped ? (
                               <span className="text-[10px] font-bold text-amber-600">Rest</span>
                             ) : (
-                              <button
-                                onClick={() => recordValue(habit, dateStr, habit.targetValue)}
-                                className="w-5 h-5 rounded border flex items-center justify-center hover:bg-emerald-500/10 text-stone-400 hover:text-emerald-600 cursor-pointer"
+                              <span
+                                className="w-5 h-5 rounded border flex items-center justify-center hover:bg-emerald-500/10 text-stone-400 hover:text-emerald-600"
                                 style={{ borderColor: 'var(--border)' }}
-                                title="Mark Completed"
                               >
                                 +
-                              </button>
+                              </span>
                             )}
                           </div>
-                        </div>
+                        </button>
                       );
                     })}
                   </div>

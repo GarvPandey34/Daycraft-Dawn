@@ -25,7 +25,17 @@ import {
   extractDraggedTaskId,
   handleTaskDropToCalendar,
   scheduleTaskToCalendar,
+  clampTimeBlockEnd,
+  isValidSingleDayTimeRange,
 } from '../../services/workflowConnectService';
+
+export function getCalendarTaskCollections(allTasks: Task[]) {
+  const nonArchivedConfirmed = allTasks.filter(t => !t.archived && t.status !== 'inbox');
+  return {
+    allActiveTasks: nonArchivedConfirmed.filter(t => t.status !== 'completed'),
+    scheduledTasks: nonArchivedConfirmed.filter(t => Boolean(t.dueDate)),
+  };
+}
 
 export const CalendarView: React.FC = () => {
   const { notify } = useNotifications();
@@ -68,10 +78,7 @@ export const CalendarView: React.FC = () => {
   const todayStr = formatLocalDate(new Date());
   const selectedDateStr = formatLocalDate(currentDate);
   const events = db.getCalendarEvents();
-  const allActiveTasks = db
-    .getTasks()
-    .filter(t => !t.archived && t.status !== 'completed');
-  const tasks = db.getTasks().filter(t => !t.archived && t.dueDate);
+  const { allActiveTasks, scheduledTasks: tasks } = getCalendarTaskCollections(db.getTasks());
   const timeBlocks = db.getTimeBlocks();
 
   const commitBlockInlineEdit = (block: TimeBlock) => {
@@ -107,6 +114,14 @@ export const CalendarView: React.FC = () => {
   const handleCreateEvent = (e: React.FormEvent) => {
     e.preventDefault();
     if (!eventTitle.trim()) return;
+    if (!isValidSingleDayTimeRange(eventStart, eventEnd)) {
+      notify({
+        title: 'Invalid Time Range',
+        message: 'End time must be later than start time (within 00:00–23:59).',
+        type: 'system',
+      });
+      return;
+    }
 
     const newEv: CalendarEvent = {
       id: `ev_${Date.now()}`,
@@ -129,6 +144,14 @@ export const CalendarView: React.FC = () => {
   const handleCreateTimeBlock = (e: React.FormEvent) => {
     e.preventDefault();
     if (!blockTitle.trim()) return;
+    if (!isValidSingleDayTimeRange(blockStart, blockEnd)) {
+      notify({
+        title: 'Invalid Time Range',
+        message: 'End time must be later than start time (within 00:00–23:59).',
+        type: 'system',
+      });
+      return;
+    }
 
     const newBlock: TimeBlock = {
       id: `tb_${Date.now()}`,
@@ -146,41 +169,39 @@ export const CalendarView: React.FC = () => {
   };
 
   const createQuickBlockAtSlot = (slotTime: string, durationMinutes: number = 60) => {
-    const [h, m] = slotTime.split(':').map(Number);
-    const endMinutesTotal = h * 60 + m + durationMinutes;
-    const endH = Math.floor(endMinutesTotal / 60);
-    const endM = endMinutesTotal % 60;
-    const endStr = `${String(endH).padStart(2, '0')}:${String(endM).padStart(2, '0')}`;
+    const { startTime, endTime: endStr, durationMinutes: clampedDuration } = clampTimeBlockEnd(
+      slotTime,
+      durationMinutes
+    );
 
     const newBlock: TimeBlock = {
       id: `tb_${Date.now()}`,
       date: selectedDateStr,
-      startTime: slotTime,
+      startTime,
       endTime: endStr,
-      title: `Focus Sprint (${durationMinutes}m)`,
+      title: `Focus Sprint (${clampedDuration}m)`,
       color: durationMinutes === 30 ? '#0284c7' : '#d97706',
     };
 
     db.saveTimeBlock(newBlock);
-    notify({ title: 'Time Block Created', message: `Reserved ${slotTime}–${endStr} (${durationMinutes}m)`, type: 'system' });
+    notify({ title: 'Time Block Created', message: `Reserved ${startTime}–${endStr} (${clampedDuration}m)`, type: 'system' });
   };
 
   const adjustBlockDuration = (block: TimeBlock, deltaMinutes: number) => {
     const [startH, startM] = block.startTime.split(':').map(Number);
     const [endH, endM] = block.endTime.split(':').map(Number);
     const currentDuration = (endH * 60 + endM) - (startH * 60 + startM);
-    const newDuration = Math.max(30, Math.min(240, currentDuration + deltaMinutes));
-
-    const newEndTotal = startH * 60 + startM + newDuration;
-    const newEndH = Math.floor(newEndTotal / 60);
-    const newEndM = newEndTotal % 60;
-    const newEndStr = `${String(newEndH).padStart(2, '0')}:${String(newEndM).padStart(2, '0')}`;
+    const requestedDuration = Math.max(30, Math.min(240, currentDuration + deltaMinutes));
+    const { endTime: newEndStr, durationMinutes: actualDuration } = clampTimeBlockEnd(
+      block.startTime,
+      requestedDuration
+    );
 
     db.saveTimeBlock({
       ...block,
       endTime: newEndStr,
     });
-    notify({ title: 'Block Resized', message: `${block.title} duration set to ${newDuration}m`, type: 'system' });
+    notify({ title: 'Block Resized', message: `${block.title} duration set to ${actualDuration}m`, type: 'system' });
   };
 
   // Drag and drop handlers for rescheduling & task scheduling
@@ -241,27 +262,25 @@ export const CalendarView: React.FC = () => {
     const block = timeBlocks.find(b => b.id === blockId);
     if (!block) return;
 
-    // Calculate duration
+    // Calculate duration and clamp to 23:59
     const [origStartH, origStartM] = block.startTime.split(':').map(Number);
     const [origEndH, origEndM] = block.endTime.split(':').map(Number);
     const durationMins = Math.max(30, (origEndH * 60 + origEndM) - (origStartH * 60 + origStartM));
-
-    const [targetH, targetM] = targetSlotTime.split(':').map(Number);
-    const newEndTotal = targetH * 60 + targetM + durationMins;
-    const newEndH = Math.floor(newEndTotal / 60);
-    const newEndM = newEndTotal % 60;
-    const newEndStr = `${String(newEndH).padStart(2, '0')}:${String(newEndM).padStart(2, '0')}`;
+    const { startTime: clampedStart, endTime: newEndStr } = clampTimeBlockEnd(
+      targetSlotTime,
+      durationMins
+    );
 
     db.saveTimeBlock({
       ...block,
       date: selectedDateStr,
-      startTime: targetSlotTime,
+      startTime: clampedStart,
       endTime: newEndStr,
     });
 
     notify({
       title: 'Time Block Rescheduled',
-      message: `Moved "${block.title}" to ${targetSlotTime}–${newEndStr}`,
+      message: `Moved "${block.title}" to ${clampedStart}–${newEndStr}`,
       type: 'system',
     });
     setDraggedBlockId(null);

@@ -22,6 +22,27 @@ import {
   scheduleTaskToCalendar,
   getDailyActivitySummary,
 } from '../../services/workflowConnectService';
+import { filterTodayFocusSessions } from '../../services/focusTimerStateService';
+
+export function resolveRescheduledTaskDate(todayStr: string, daysFromToday: number): string {
+  return addDays(todayStr, daysFromToday);
+}
+
+export function getMyDayScheduledTasks(tasks: Task[], selectedDate: string, todayStr: string) {
+  const scheduledPool = tasks.filter(t => !t.archived && t.status !== 'inbox');
+  const dateTasks = scheduledPool.filter(t => t.dueDate === selectedDate);
+  const completedDateTasks = dateTasks.filter(t => t.status === 'completed');
+  const unfinishedDateTasks = dateTasks.filter(t => t.status !== 'completed');
+  const overdueTasks = scheduledPool.filter(
+    t => t.status !== 'completed' && Boolean(t.dueDate && t.dueDate < todayStr)
+  );
+  return {
+    dateTasks,
+    completedDateTasks,
+    unfinishedDateTasks,
+    overdueTasks,
+  };
+}
 
 interface MyDayViewProps {
   onOpenQuickAdd: () => void;
@@ -47,17 +68,14 @@ export const MyDayView: React.FC<MyDayViewProps> = ({ onOpenQuickAdd, onNavigate
   const occurrences = db.getHabitOccurrences();
   const events = db.getCalendarEvents();
   const timeBlocks = db.getTimeBlocks().filter(b => b.date === selectedDate);
-  const focusSessions = db.getFocusSessions().filter(s => s.startTime.startsWith(selectedDate));
+  const focusSessions = filterTodayFocusSessions(db.getFocusSessions(), selectedDate);
 
-  // Tasks due on selected date
-  const dateTasks = tasks.filter(t => t.dueDate === selectedDate);
-  const completedDateTasks = dateTasks.filter(t => t.status === 'completed');
-  const unfinishedDateTasks = dateTasks.filter(t => t.status !== 'completed');
-
-  // Overdue tasks: due before todayStr and not completed
-  const overdueTasks = tasks.filter(
-    t => t.status !== 'completed' && t.dueDate && t.dueDate < todayStr
-  );
+  const {
+    dateTasks,
+    completedDateTasks,
+    unfinishedDateTasks,
+    overdueTasks,
+  } = getMyDayScheduledTasks(tasks, selectedDate, todayStr);
 
   const dailySummary = getDailyActivitySummary(selectedDate);
 
@@ -117,15 +135,17 @@ export const MyDayView: React.FC<MyDayViewProps> = ({ onOpenQuickAdd, onNavigate
     }
   };
 
-  const postponeTask = (task: Task, daysAhead: number) => {
-    const newDueDate = addDays(task.dueDate || todayStr, daysAhead);
+  const postponeTask = (task: Task, daysFromToday: number) => {
+    const newDueDate = resolveRescheduledTaskDate(todayStr, daysFromToday);
     db.saveTask({
       ...task,
       dueDate: newDueDate,
     });
+    const label =
+      daysFromToday === 0 ? `Today (${newDueDate})` : daysFromToday === 1 ? `Tomorrow (${newDueDate})` : newDueDate;
     notify({
       title: 'Task Rescheduled',
-      message: `Moved "${task.title}" to ${newDueDate}`,
+      message: `Moved "${task.title}" to ${label}`,
       type: 'system',
     });
   };
@@ -377,15 +397,15 @@ export const MyDayView: React.FC<MyDayViewProps> = ({ onOpenQuickAdd, onNavigate
 
                 <div className="flex items-center gap-2 shrink-0">
                   <button
-                    onClick={() => postponeTask(t, 1)}
-                    className="px-2.5 py-1 rounded-lg border text-xs font-medium hover:bg-white/40"
+                    onClick={() => postponeTask(t, 0)}
+                    className="px-2.5 py-1 rounded-lg border text-xs font-medium hover:bg-white/40 cursor-pointer"
                     style={{ borderColor: 'var(--border)' }}
                   >
                     Move to Today
                   </button>
                   <button
-                    onClick={() => postponeTask(t, 2)}
-                    className="px-2.5 py-1 rounded-lg border text-xs font-medium hover:bg-white/40"
+                    onClick={() => postponeTask(t, 1)}
+                    className="px-2.5 py-1 rounded-lg border text-xs font-medium hover:bg-white/40 cursor-pointer"
                     style={{ borderColor: 'var(--border)' }}
                   >
                     Tomorrow

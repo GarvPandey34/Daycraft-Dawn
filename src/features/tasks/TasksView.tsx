@@ -18,7 +18,6 @@ import { db } from '../../database/db';
 import { useNotifications } from '../../notifications/NotificationContext';
 import { Task, Priority, TaskStatus } from '../../domain/models';
 import { formatLocalDate } from '../../services/streakService';
-import { getNextOccurrenceDate } from '../../services/recurrenceService';
 import { useMotionPreference, MOTION_SPRINGS } from '../../theme/motion';
 import { AnimatedCheckbox, EmptyStateMotion } from '../../components/MotionPrimitives';
 import {
@@ -35,6 +34,36 @@ const KANBAN_COLUMNS: { id: TaskStatus; title: string; color: string }[] = [
   { id: 'in_progress', title: 'In Progress', color: '#2563eb' },
   { id: 'completed', title: 'Completed', color: '#16a34a' },
 ];
+
+export type TasksViewTab = 'all' | 'today' | 'upcoming' | 'overdue' | 'completed' | 'archived';
+
+export function filterTasksByTab(
+  tasks: Task[],
+  activeTab: TasksViewTab,
+  todayStr: string
+): Task[] {
+  return tasks.filter(t => {
+    if (activeTab === 'archived') return t.archived;
+    if (t.archived) return false;
+
+    if (activeTab === 'completed') return t.status === 'completed';
+    if (activeTab === 'today') {
+      return t.status !== 'completed' && t.status !== 'inbox' && t.dueDate === todayStr;
+    }
+    if (activeTab === 'upcoming') {
+      return Boolean(
+        t.status !== 'completed' && t.status !== 'inbox' && t.dueDate && t.dueDate > todayStr
+      );
+    }
+    if (activeTab === 'overdue') {
+      return Boolean(
+        t.status !== 'completed' && t.status !== 'inbox' && t.dueDate && t.dueDate < todayStr
+      );
+    }
+    if (activeTab === 'all') return t.status !== 'completed' && t.status !== 'inbox';
+    return true;
+  });
+}
 
 export const TasksView: React.FC = () => {
   const { notify, triggerCelebration } = useNotifications();
@@ -70,6 +99,16 @@ export const TasksView: React.FC = () => {
   const tasks = db.getTasks();
   const projects = db.getProjects();
   const timeBlocks = db.getTimeBlocks();
+  const effectiveProjectId =
+    selectedProjectId !== 'all' && projects.some(p => p.id === selectedProjectId)
+      ? selectedProjectId
+      : 'all';
+
+  useEffect(() => {
+    if (selectedProjectId !== 'all' && !projects.some(p => p.id === selectedProjectId)) {
+      setSelectedProjectId('all');
+    }
+  }, [projects, selectedProjectId]);
 
   const startInlineEdit = (task: Task) => {
     setEditingTaskId(task.id);
@@ -157,25 +196,12 @@ export const TasksView: React.FC = () => {
       });
       triggerCelebration();
 
-      if (task.recurrence && task.recurrence.type !== 'none' && task.dueDate) {
-        const nextDate = getNextOccurrenceDate(task.dueDate, task.recurrence, todayStr);
-        if (nextDate) {
-          const nextTask: Task = {
-            ...task,
-            id: `t_rec_${Date.now()}`,
-            dueDate: nextDate,
-            status: 'todo',
-            completedAt: undefined,
-            createdAt: now,
-            updatedAt: now,
-          };
-          db.saveTask(nextTask);
-          notify({
-            title: 'Recurring Task Scheduled',
-            message: `Next occurrence on ${nextDate}`,
-            type: 'system',
-          });
-        }
+      if (outcome.spawnedNextTask) {
+        notify({
+          title: 'Recurring Task Scheduled',
+          message: `Next occurrence on ${outcome.spawnedNextTask.dueDate}`,
+          type: 'system',
+        });
       }
     }
   };
@@ -201,6 +227,14 @@ export const TasksView: React.FC = () => {
         type: 'task',
       });
       triggerCelebration();
+
+      if (outcome.spawnedNextTask) {
+        notify({
+          title: 'Recurring Task Scheduled',
+          message: `Next occurrence on ${outcome.spawnedNextTask.dueDate}`,
+          type: 'system',
+        });
+      }
     } else {
       notify({ title: 'Task Moved', message: `Moved to ${targetStatus.replace('_', ' ')}`, type: 'system' });
     }
@@ -262,23 +296,13 @@ export const TasksView: React.FC = () => {
   };
 
   // Filter logic
-  let filtered = tasks.filter(t => {
-    if (activeTab === 'archived') return t.archived;
-    if (t.archived) return false;
-
-    if (activeTab === 'completed') return t.status === 'completed';
-    if (activeTab === 'today') return t.status !== 'completed' && t.dueDate === todayStr;
-    if (activeTab === 'upcoming') return t.status !== 'completed' && t.dueDate && t.dueDate > todayStr;
-    if (activeTab === 'overdue') return t.status !== 'completed' && t.dueDate && t.dueDate < todayStr;
-    if (activeTab === 'all') return t.status !== 'completed';
-    return true;
-  });
+  let filtered = filterTasksByTab(tasks, activeTab, todayStr);
 
   if (priorityFilter !== 'all') {
     filtered = filtered.filter(t => t.priority === priorityFilter);
   }
-  if (selectedProjectId !== 'all') {
-    filtered = filtered.filter(t => t.projectId === selectedProjectId);
+  if (effectiveProjectId !== 'all') {
+    filtered = filtered.filter(t => t.projectId === effectiveProjectId);
   }
   if (searchQuery.trim()) {
     const q = searchQuery.toLowerCase();
@@ -289,7 +313,7 @@ export const TasksView: React.FC = () => {
   const boardTasks = tasks.filter(t => {
     if (t.archived) return false;
     if (priorityFilter !== 'all' && t.priority !== priorityFilter) return false;
-    if (selectedProjectId !== 'all' && t.projectId !== selectedProjectId) return false;
+    if (effectiveProjectId !== 'all' && t.projectId !== effectiveProjectId) return false;
     if (searchQuery.trim()) {
       const q = searchQuery.toLowerCase();
       if (!t.title.toLowerCase().includes(q) && !t.description.toLowerCase().includes(q)) return false;

@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import {
   BookOpen,
   Plus,
@@ -18,7 +18,7 @@ import {
   Flame,
   Timer,
 } from 'lucide-react';
-import { db } from '../../database/db';
+import { DatabaseManager, db } from '../../database/db';
 import { useNotifications } from '../../notifications/NotificationContext';
 import { JournalEntry } from '../../domain/models';
 import { formatLocalDate } from '../../services/streakService';
@@ -27,6 +27,96 @@ import {
   getDailyActivitySummary,
   formatDailySummaryMarkdown,
 } from '../../services/workflowConnectService';
+
+export function buildUpdatedJournalEntry(
+  existing: JournalEntry | undefined,
+  draft: {
+    id: string;
+    date: string;
+    title: string;
+    content: string;
+    mood?: number;
+    energy?: number;
+    tags: string[];
+  },
+  nowIso: string = new Date().toISOString()
+): JournalEntry {
+  return {
+    id: draft.id,
+    date: draft.date,
+    title: draft.title.trim() || 'Untitled Reflection',
+    content: draft.content,
+    mood: draft.mood,
+    energy: draft.energy,
+    tags: draft.tags,
+    createdAt: existing?.createdAt || nowIso,
+    updatedAt: nowIso,
+  };
+}
+
+export interface DirtyJournalDraftRefState {
+  isDirty: boolean;
+  selectedEntryId: string | null;
+  entryDate: string;
+  title: string;
+  content: string;
+  mood: number;
+  energy: number;
+  tagsInput: string;
+}
+
+export function flushDirtyJournalDraft(
+  draftRef: { current: DirtyJournalDraftRefState },
+  database: DatabaseManager = db,
+  nowIso: string = new Date().toISOString()
+): JournalEntry | null {
+  const snapshot = draftRef.current;
+  if (!snapshot.isDirty || !snapshot.selectedEntryId) {
+    return null;
+  }
+
+  // Synchronously mark clean so repeated or Strict-Mode calls never save twice
+  draftRef.current = {
+    ...snapshot,
+    isDirty: false,
+  };
+
+  const existing = database.getJournalEntries().find(e => e.id === snapshot.selectedEntryId);
+  if (!existing) {
+    return null;
+  }
+
+  const tags = snapshot.tagsInput
+    .split(',')
+    .map(t => t.trim().toLowerCase())
+    .filter(Boolean);
+
+  const updated = buildUpdatedJournalEntry(
+    existing,
+    {
+      id: snapshot.selectedEntryId,
+      date: snapshot.entryDate,
+      title: snapshot.title,
+      content: snapshot.content,
+      mood: snapshot.mood,
+      energy: snapshot.energy,
+      tags,
+    },
+    nowIso
+  );
+
+  database.saveJournalEntry(updated);
+  return updated;
+}
+
+export function clearJournalSaveTimeout(timeoutRef: {
+  current: ReturnType<typeof setTimeout> | null;
+}): void {
+  if (timeoutRef.current !== null) {
+    clearTimeout(timeoutRef.current);
+    timeoutRef.current = null;
+  }
+}
 
 export const JournalView: React.FC = () => {
   const { notify } = useNotifications();
@@ -48,8 +138,39 @@ export const JournalView: React.FC = () => {
   const [tagsInput, setTagsInput] = useState('');
   const [showDailySummaryFooter, setShowDailySummaryFooter] = useState(true);
 
+  const saveTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const dirtyDraftRef = useRef<DirtyJournalDraftRefState>({
+    isDirty: false,
+    selectedEntryId: null,
+    entryDate,
+    title,
+    content,
+    mood,
+    energy,
+    tagsInput,
+  });
+
+  dirtyDraftRef.current = {
+    isDirty: saveStatus === 'dirty',
+    selectedEntryId,
+    entryDate,
+    title,
+    content,
+    mood,
+    energy,
+    tagsInput,
+  };
+
   useEffect(() => {
     return db.subscribe(() => setTick(t => t + 1));
+  }, []);
+
+  // Persist unsaved edits and clear any pending manual-save toast timeout when leaving JournalView
+  useEffect(() => {
+    return () => {
+      clearJournalSaveTimeout(saveTimeoutRef);
+      flushDirtyJournalDraft(dirtyDraftRef, db);
+    };
   }, []);
 
   const journalEntries = db.getJournalEntries();
@@ -67,14 +188,24 @@ export const JournalView: React.FC = () => {
     });
   };
 
-  // Load first entry on initial view if available
-  useEffect(() => {
-    if (!selectedEntryId && journalEntries.length > 0) {
-      loadEntry(journalEntries[0]);
-    }
-  }, [journalEntries]);
+  const commitCurrentEntryIfDirty = () => {
+    flushDirtyJournalDraft(dirtyDraftRef, db);
+  };
 
   const loadEntry = (entry: JournalEntry) => {
+    if (selectedEntryId && selectedEntryId !== entry.id && saveStatus === 'dirty') {
+      commitCurrentEntryIfDirty();
+    }
+    dirtyDraftRef.current = {
+      isDirty: false,
+      selectedEntryId: entry.id,
+      entryDate: entry.date,
+      title: entry.title,
+      content: entry.content,
+      mood: entry.mood || 5,
+      energy: entry.energy || 4,
+      tagsInput: entry.tags?.join(', ') || '',
+    };
     setSelectedEntryId(entry.id);
     setTitle(entry.title);
     setContent(entry.content);
@@ -85,8 +216,17 @@ export const JournalView: React.FC = () => {
     setSaveStatus('saved');
   };
 
+  // Load first entry on initial view if available
+  useEffect(() => {
+    if (!selectedEntryId && journalEntries.length > 0) {
+      loadEntry(journalEntries[0]);
+    }
+  }, [selectedEntryId, journalEntries.length]);
+
   const createNewEntry = () => {
+    commitCurrentEntryIfDirty();
     const today = formatLocalDate(new Date());
+    const nowIso = new Date().toISOString();
     const newEntry: JournalEntry = {
       id: `j_${Date.now()}`,
       date: today,
@@ -95,8 +235,8 @@ export const JournalView: React.FC = () => {
       mood: 5,
       energy: 4,
       tags: ['reflection'],
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
+      createdAt: nowIso,
+      updatedAt: nowIso,
     };
     db.saveJournalEntry(newEntry);
     loadEntry(newEntry);
@@ -107,29 +247,41 @@ export const JournalView: React.FC = () => {
   const handleSave = () => {
     if (!selectedEntryId) return;
 
+    dirtyDraftRef.current = {
+      ...dirtyDraftRef.current,
+      isDirty: false,
+    };
     setSaveStatus('saving');
+    const existing = journalEntries.find(e => e.id === selectedEntryId);
     const tags = tagsInput.split(',').map(t => t.trim().toLowerCase()).filter(Boolean);
-
-    const updated: JournalEntry = {
+    const updated = buildUpdatedJournalEntry(existing, {
       id: selectedEntryId,
       date: entryDate,
-      title: title.trim() || 'Untitled Reflection',
+      title,
       content,
       mood,
       energy,
       tags,
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-    };
+    });
 
     db.saveJournalEntry(updated);
-    setTimeout(() => {
+    clearJournalSaveTimeout(saveTimeoutRef);
+    saveTimeoutRef.current = setTimeout(() => {
+      saveTimeoutRef.current = null;
       setSaveStatus('saved');
       notify({ title: 'Journal Saved', message: 'Encrypted & stored locally.', type: 'system' });
     }, 150);
   };
 
   const deleteEntry = (id: string) => {
+    if (id === selectedEntryId) {
+      dirtyDraftRef.current = {
+        ...dirtyDraftRef.current,
+        isDirty: false,
+        selectedEntryId: null,
+      };
+      setSaveStatus('saved');
+    }
     db.deleteJournalEntry(id);
     notify({ title: 'Entry Deleted', message: 'Journal reflection removed.', type: 'system' });
     setSelectedEntryId(null);

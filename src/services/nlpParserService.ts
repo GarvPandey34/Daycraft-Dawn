@@ -194,3 +194,37 @@ export function parseNaturalLanguageInput(
     confidence: 0.9,
   };
 }
+
+/**
+ * Computes a valid zero-padded HH:mm endTime on the same day, preserving start minutes
+ * and clamping at 23:59 so late-evening events never overflow to 24:00+.
+ */
+export function computeSafeEndTime(startTime: string, durationMinutes: number = 60): string {
+  const trimmed = (startTime || '').trim();
+  const match = trimmed.match(/^(\d{1,2}):(\d{2})$/);
+  if (!match) {
+    return '10:00';
+  }
+  const startHours = Math.max(0, Math.min(23, parseInt(match[1], 10)));
+  const startMins = Math.max(0, Math.min(59, parseInt(match[2], 10)));
+  const startTotal = startHours * 60 + startMins;
+  const safeDuration = Number.isFinite(durationMinutes) && durationMinutes > 0 ? Math.round(durationMinutes) : 60;
+  const endTotal = Math.min(23 * 60 + 59, Math.max(startTotal + 1, startTotal + safeDuration));
+  const endHours = Math.floor(endTotal / 60);
+  const endMins = endTotal % 60;
+  return `${String(endHours).padStart(2, '0')}:${String(endMins).padStart(2, '0')}`;
+}
+
+/**
+ * Resolves the HabitScheduleType from NLP parsed recurrence tokens.
+ */
+export function resolveHabitScheduleFromRecurrence(
+  recurrence?: 'daily' | 'weekly' | 'weekdays',
+  fallback: 'daily' | 'weekdays' | 'custom' = 'daily'
+): 'daily' | 'weekdays' | 'custom' {
+  if (recurrence === 'weekdays') return 'weekdays';
+  if (recurrence === 'daily') return 'daily';
+  if (recurrence === 'weekly') return 'custom';
+  return fallback;
+}
+

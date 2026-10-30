@@ -13,7 +13,11 @@ import {
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { db } from '../database/db';
-import { parseNaturalLanguageInput } from '../services/nlpParserService';
+import {
+  computeSafeEndTime,
+  parseNaturalLanguageInput,
+  resolveHabitScheduleFromRecurrence,
+} from '../services/nlpParserService';
 import { useNotifications } from '../notifications/NotificationContext';
 import { formatLocalDate } from '../services/streakService';
 import { useMotionPreference, MOTION_SPRINGS } from '../theme/motion';
@@ -24,6 +28,60 @@ interface QuickAddModalProps {
 }
 
 type QuickTab = 'task' | 'habit' | 'project' | 'goal' | 'event' | 'journal' | 'focus';
+
+export type QuickAddHabitSchedule = 'daily' | 'weekdays' | 'custom';
+
+export interface QuickAddHabitScheduleState {
+  schedule: QuickAddHabitSchedule;
+  hasManualOverride: boolean;
+}
+
+export function createInitialQuickAddHabitScheduleState(): QuickAddHabitScheduleState {
+  return {
+    schedule: 'daily',
+    hasManualOverride: false,
+  };
+}
+
+export function applyNlpToQuickAddHabitSchedule(
+  state: QuickAddHabitScheduleState,
+  rawInput: string
+): QuickAddHabitScheduleState {
+  if (state.hasManualOverride) {
+    return state;
+  }
+  if (rawInput.trim().length <= 3) {
+    return {
+      schedule: 'daily',
+      hasManualOverride: false,
+    };
+  }
+  const parsed = parseNaturalLanguageInput(rawInput);
+  return {
+    schedule: resolveHabitScheduleFromRecurrence(parsed.recurrence, 'daily'),
+    hasManualOverride: false,
+  };
+}
+
+export function applyManualQuickAddHabitSchedule(
+  _state: QuickAddHabitScheduleState,
+  manualSchedule: QuickAddHabitSchedule
+): QuickAddHabitScheduleState {
+  return {
+    schedule: manualSchedule,
+    hasManualOverride: true,
+  };
+}
+
+export function resolveFinalQuickAddHabitSchedule(
+  state: QuickAddHabitScheduleState,
+  parsedRecurrence?: 'daily' | 'weekly' | 'weekdays'
+): QuickAddHabitSchedule {
+  if (state.hasManualOverride) {
+    return state.schedule;
+  }
+  return resolveHabitScheduleFromRecurrence(parsedRecurrence, state.schedule);
+}
 
 export const QuickAddModal: React.FC<QuickAddModalProps> = ({ isOpen, onClose }) => {
   const { notify } = useNotifications();
@@ -38,7 +96,9 @@ export const QuickAddModal: React.FC<QuickAddModalProps> = ({ isOpen, onClose })
   const [date, setDate] = useState(formatLocalDate(new Date()));
   const [time, setTime] = useState('');
   const [priority, setPriority] = useState<'low' | 'medium' | 'high' | 'urgent'>('medium');
-  const [habitSchedule] = useState<'daily' | 'weekdays' | 'custom'>('daily');
+  const [habitScheduleState, setHabitScheduleState] = useState<QuickAddHabitScheduleState>(
+    createInitialQuickAddHabitScheduleState
+  );
   const [habitTarget, setHabitTarget] = useState(1);
   const [habitUnit, setHabitUnit] = useState('times');
   const [durationMins, setDurationMins] = useState(25);
@@ -58,6 +118,7 @@ export const QuickAddModal: React.FC<QuickAddModalProps> = ({ isOpen, onClose })
   const handleNlpChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const val = e.target.value;
     setNlpInput(val);
+    setHabitScheduleState(prev => applyNlpToQuickAddHabitSchedule(prev, val));
     if (val.trim().length > 3) {
       const parsed = parseNaturalLanguageInput(val);
       setParsedPreview(parsed);
@@ -72,9 +133,14 @@ export const QuickAddModal: React.FC<QuickAddModalProps> = ({ isOpen, onClose })
         if (parsed.habitTargetUnit) setHabitUnit(parsed.habitTargetUnit);
       } else if (parsed.detectedType === 'focus') {
         setActiveTab('focus');
+      } else if (parsed.detectedType === 'event') {
+        setActiveTab('event');
+      } else if (parsed.detectedType === 'task') {
+        setActiveTab(prev => (prev === 'habit' || prev === 'focus' ? 'task' : prev));
       }
     } else {
       setParsedPreview(null);
+      setActiveTab(prev => (prev === 'habit' || prev === 'focus' ? 'task' : prev));
     }
   };
 
@@ -85,6 +151,7 @@ export const QuickAddModal: React.FC<QuickAddModalProps> = ({ isOpen, onClose })
     setDescription('');
     setTime('');
     setPriority('medium');
+    setHabitScheduleState(createInitialQuickAddHabitScheduleState());
     setHabitTarget(1);
     setHabitUnit('times');
   };
@@ -114,7 +181,11 @@ export const QuickAddModal: React.FC<QuickAddModalProps> = ({ isOpen, onClose })
         notify({ title: 'Task Created', message: `Added "${title}"`, type: 'task' });
         break;
 
-      case 'habit':
+      case 'habit': {
+        const resolvedSchedule = resolveFinalQuickAddHabitSchedule(
+          habitScheduleState,
+          parsedPreview?.recurrence
+        );
         db.saveHabit({
           id: `h_${Date.now()}`,
           name: title.trim(),
@@ -123,7 +194,7 @@ export const QuickAddModal: React.FC<QuickAddModalProps> = ({ isOpen, onClose })
           icon: 'Flame',
           color: '#C86D51',
           startDate: date,
-          scheduleType: habitSchedule,
+          scheduleType: resolvedSchedule,
           targetType: habitUnit === 'times' || habitUnit === 'done' ? 'boolean' : 'numeric',
           targetValue: habitTarget,
           targetUnit: habitUnit,
@@ -133,6 +204,7 @@ export const QuickAddModal: React.FC<QuickAddModalProps> = ({ isOpen, onClose })
         });
         notify({ title: 'Habit Created', message: `Anchor set for "${title}"`, type: 'habit' });
         break;
+      }
 
       case 'project':
         db.saveProject({
@@ -170,21 +242,26 @@ export const QuickAddModal: React.FC<QuickAddModalProps> = ({ isOpen, onClose })
         notify({ title: 'Goal Established', message: `Vision set: "${title}"`, type: 'system' });
         break;
 
-      case 'event':
+      case 'event': {
+        const resolvedStart = time || '09:00';
+        const resolvedEnd = time
+          ? computeSafeEndTime(time, parsedPreview?.durationMinutes || 60)
+          : '10:00';
         db.saveCalendarEvent({
           id: `ev_${Date.now()}`,
           title: title.trim(),
           description: description.trim(),
           startDate: date,
-          startTime: time || '09:00',
+          startTime: resolvedStart,
           endDate: date,
-          endTime: time ? `${parseInt(time.split(':')[0]) + 1}:00` : '10:00',
+          endTime: resolvedEnd,
           allDay: !time,
           color: '#0284C7',
           createdAt: now,
         });
         notify({ title: 'Event Scheduled', message: `Calendar booked for "${title}"`, type: 'reminder' });
         break;
+      }
 
       case 'journal':
         db.saveJournalEntry({
@@ -431,30 +508,59 @@ export const QuickAddModal: React.FC<QuickAddModalProps> = ({ isOpen, onClose })
                 )}
 
                 {activeTab === 'habit' && (
-                  <div>
-                    <label htmlFor="quick-add-habit-target-input" className="block text-xs font-semibold mb-1" style={{ color: 'var(--text-secondary)' }}>
-                      Target (e.g. 20 pages)
-                    </label>
-                    <div className="flex gap-2">
-                      <input
-                        id="quick-add-habit-target-input"
-                        type="number"
-                        min={1}
-                        value={habitTarget}
-                        onChange={e => setHabitTarget(parseInt(e.target.value) || 1)}
-                        className="w-16 px-2 py-2 rounded-lg border text-sm"
-                        style={{ backgroundColor: 'var(--bg-surface)', borderColor: 'var(--border)' }}
-                      />
-                      <input
-                        type="text"
-                        value={habitUnit}
-                        onChange={e => setHabitUnit(e.target.value)}
-                        placeholder="unit"
-                        className="flex-1 px-2 py-2 rounded-lg border text-sm"
-                        style={{ backgroundColor: 'var(--bg-surface)', borderColor: 'var(--border)' }}
-                      />
+                  <>
+                    <div>
+                      <label htmlFor="quick-add-habit-schedule-select" className="block text-xs font-semibold mb-1" style={{ color: 'var(--text-secondary)' }}>
+                        Schedule
+                      </label>
+                      <select
+                        id="quick-add-habit-schedule-select"
+                        value={habitScheduleState.schedule}
+                        onChange={e =>
+                          setHabitScheduleState(prev =>
+                            applyManualQuickAddHabitSchedule(
+                              prev,
+                              e.target.value as QuickAddHabitSchedule
+                            )
+                          )
+                        }
+                        className="w-full px-3 py-2 rounded-lg border text-sm focus-visible:outline-none"
+                        style={{
+                          backgroundColor: 'var(--bg-surface)',
+                          borderColor: 'var(--border)',
+                          color: 'var(--text-primary)',
+                        }}
+                      >
+                        <option value="daily">Every Day</option>
+                        <option value="weekdays">Weekdays (Mon–Fri)</option>
+                        <option value="custom">Custom / Weekly</option>
+                      </select>
                     </div>
-                  </div>
+                    <div className="col-span-2">
+                      <label htmlFor="quick-add-habit-target-input" className="block text-xs font-semibold mb-1" style={{ color: 'var(--text-secondary)' }}>
+                        Target (e.g. 20 pages)
+                      </label>
+                      <div className="flex gap-2">
+                        <input
+                          id="quick-add-habit-target-input"
+                          type="number"
+                          min={1}
+                          value={habitTarget}
+                          onChange={e => setHabitTarget(parseInt(e.target.value) || 1)}
+                          className="w-16 px-2 py-2 rounded-lg border text-sm"
+                          style={{ backgroundColor: 'var(--bg-surface)', borderColor: 'var(--border)' }}
+                        />
+                        <input
+                          type="text"
+                          value={habitUnit}
+                          onChange={e => setHabitUnit(e.target.value)}
+                          placeholder="unit"
+                          className="flex-1 px-2 py-2 rounded-lg border text-sm"
+                          style={{ backgroundColor: 'var(--bg-surface)', borderColor: 'var(--border)' }}
+                        />
+                      </div>
+                    </div>
+                  </>
                 )}
 
                 {(activeTab === 'event' || activeTab === 'task') && (

@@ -41,6 +41,7 @@ import {
   XP_VALUES,
 } from '../services/gamificationService';
 import { calculateHabitStreak, formatLocalDate } from '../services/streakService';
+import { getNextOccurrenceDate, hasDuplicateOccurrence } from '../services/recurrenceService';
 import {
   getNewlyUnlockedThemes,
   isThemeUnlocked,
@@ -106,6 +107,7 @@ export interface RewardOutcome {
   crossedLevels?: number[];
   newlyClaimedLevelRewards?: LevelMilestoneReward[];
   newlyUnlockedThemes?: PresetDefinition[];
+  spawnedNextTask?: Task;
 }
 
 const EMPTY_REWARD_OUTCOME: RewardOutcome = {
@@ -823,6 +825,29 @@ export class DatabaseManager {
       this.tasks = [...this.tasks, updated];
     }
 
+    let spawnedNextTask: Task | undefined;
+    if (isNowCompleted && !wasCompleted && updated.recurrence && updated.recurrence.type !== 'none') {
+      const baseDueDate = updated.dueDate || formatLocalDate(new Date());
+      const nextDate = getNextOccurrenceDate(baseDueDate, updated.recurrence);
+      const existingDates = this.tasks
+        .filter(t => t.title === updated.title && t.id !== updated.id)
+        .map(t => t.dueDate || '');
+      if (nextDate && !hasDuplicateOccurrence(existingDates, nextDate)) {
+        const nextTask: Task = {
+          ...updated,
+          id: `t_rec_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+          status: 'todo',
+          dueDate: nextDate,
+          completedAt: undefined,
+          actualMinutes: undefined,
+          createdAt: now,
+          updatedAt: now,
+        };
+        spawnedNextTask = nextTask;
+        this.tasks = [...this.tasks, nextTask];
+      }
+    }
+
     let xpAwarded = 0;
     if (isNowCompleted && !wasCompleted && this.settings.gamificationEnabled) {
       if (!isXpAlreadyAwarded(this.xpLedger, 'task_completed', updated.id)) {
@@ -842,7 +867,8 @@ export class DatabaseManager {
       }
     }
 
-    return this.finalizeProgressionAndPersist(xpAwarded, previousTotalXp, previousUnlockedIds);
+    const outcome = this.finalizeProgressionAndPersist(xpAwarded, previousTotalXp, previousUnlockedIds);
+    return spawnedNextTask ? { ...outcome, spawnedNextTask } : outcome;
   }
 
   deleteTask(id: string): void {
@@ -870,10 +896,32 @@ export class DatabaseManager {
   }
 
   deleteHabit(id: string): void {
+    const now = new Date().toISOString();
     this.habits = this.habits.filter(h => h.id !== id);
     this.habitOccurrences = this.habitOccurrences.filter(o => o.habitId !== id);
+    this.habitRoutines = this.habitRoutines.map(r =>
+      r.habitIds.includes(id)
+        ? { ...r, habitIds: r.habitIds.filter(hId => hId !== id), updatedAt: now }
+        : r
+    );
+    this.goals = this.goals.map(g =>
+      (g.linkedHabitIds || []).includes(id)
+        ? { ...g, linkedHabitIds: (g.linkedHabitIds || []).filter(hId => hId !== id), updatedAt: now }
+        : g
+    );
     this.recalculateAchievements({ silent: true });
     this.persist();
+  }
+
+  deleteHabitOccurrence(habitId: string, date: string): void {
+    const before = this.habitOccurrences.length;
+    this.habitOccurrences = this.habitOccurrences.filter(
+      o => !(o.habitId === habitId && o.date === date)
+    );
+    if (this.habitOccurrences.length !== before) {
+      this.recalculateAchievements({ silent: true });
+      this.persist();
+    }
   }
 
   getHabitOccurrences(habitId?: string): HabitOccurrence[] {
@@ -1035,7 +1083,19 @@ export class DatabaseManager {
   }
 
   deleteProject(id: string): void {
+    const now = new Date().toISOString();
     this.projects = this.projects.filter(p => p.id !== id);
+    this.tasks = this.tasks.map(t =>
+      t.projectId === id ? { ...t, projectId: undefined, updatedAt: now } : t
+    );
+    this.timeBlocks = this.timeBlocks.map(tb =>
+      tb.linkedProjectId === id ? { ...tb, linkedProjectId: undefined } : tb
+    );
+    this.goals = this.goals.map(g =>
+      (g.linkedProjectIds || []).includes(id)
+        ? { ...g, linkedProjectIds: (g.linkedProjectIds || []).filter(pId => pId !== id), updatedAt: now }
+        : g
+    );
     this.recalculateAchievements({ silent: true });
     this.persist();
   }
@@ -1277,6 +1337,15 @@ export class DatabaseManager {
     return this.finalizeProgressionAndPersist(xpAwarded, previousTotalXp, previousUnlockedIds);
   }
 
+  deleteStudySession(id: string): void {
+    const before = this.studySessions.length;
+    this.studySessions = this.studySessions.filter(s => s.id !== id);
+    if (this.studySessions.length !== before) {
+      this.recalculateAchievements({ silent: true });
+      this.persist();
+    }
+  }
+
   // --- Wellness ---
   getWellnessTrackers(): WellnessTracker[] {
     return [...this.wellnessTrackers];
@@ -1319,7 +1388,12 @@ export class DatabaseManager {
     const previousUnlockedIds = this.getUnlockedAchievementIds();
     const idx = this.journalEntries.findIndex(j => j.id === entry.id);
     const now = new Date().toISOString();
-    const updated = { ...entry, updatedAt: now };
+    const existingCreatedAt = idx >= 0 ? this.journalEntries[idx].createdAt : undefined;
+    const updated: JournalEntry = {
+      ...entry,
+      createdAt: existingCreatedAt || entry.createdAt || now,
+      updatedAt: now,
+    };
 
     let xpAwarded = 0;
     if (idx >= 0) {

@@ -9,6 +9,49 @@ export interface ScheduleTaskOptions {
 }
 
 /**
+ * Validates that startTime and endTime are valid single-day HH:mm strings
+ * within 00:00–23:59 and that endTime is strictly later than startTime.
+ */
+export function isValidSingleDayTimeRange(startTime: string, endTime: string): boolean {
+  const m1 = (startTime || '').trim().match(/^(\d{2}):(\d{2})$/);
+  const m2 = (endTime || '').trim().match(/^(\d{2}):(\d{2})$/);
+  if (!m1 || !m2) return false;
+  const h1 = parseInt(m1[1], 10);
+  const min1 = parseInt(m1[2], 10);
+  const h2 = parseInt(m2[1], 10);
+  const min2 = parseInt(m2[2], 10);
+  if (h1 < 0 || h1 > 23 || min1 < 0 || min1 > 59) return false;
+  if (h2 < 0 || h2 > 23 || min2 < 0 || min2 > 59) return false;
+  return h2 * 60 + min2 > h1 * 60 + min1;
+}
+
+/**
+ * Computes a clamped single-day endTime (max 23:59) for a given startTime and durationMinutes.
+ */
+export function clampTimeBlockEnd(
+  startTime: string,
+  durationMinutes: number = 60
+): { startTime: string; endTime: string; durationMinutes: number } {
+  const m = (startTime || '').trim().match(/^(\d{1,2}):(\d{2})$/);
+  const startH = m ? Math.max(0, Math.min(23, parseInt(m[1], 10))) : 9;
+  const startM = m ? Math.max(0, Math.min(59, parseInt(m[2], 10))) : 0;
+  const startTotal = Math.min(23 * 60 + 58, startH * 60 + startM);
+  const requestedDuration = Math.max(15, Math.min(240, Math.round(durationMinutes || 60)));
+  const endTotal = Math.min(23 * 60 + 59, Math.max(startTotal + 1, startTotal + requestedDuration));
+  const actualDuration = endTotal - startTotal;
+  const normStartH = Math.floor(startTotal / 60);
+  const normStartM = startTotal % 60;
+  const endH = Math.floor(endTotal / 60);
+  const endM = endTotal % 60;
+  return {
+    startTime: `${String(normStartH).padStart(2, '0')}:${String(normStartM).padStart(2, '0')}`,
+    endTime: `${String(endH).padStart(2, '0')}:${String(endM).padStart(2, '0')}`,
+    durationMinutes: actualDuration,
+  };
+}
+
+
+/**
  * Finds the next available 30-minute slot on a given date between 08:00 and 20:30,
  * or uses the task's dueTime / preferredStartTime if specified.
  */
@@ -34,33 +77,36 @@ export function findNextAvailableTimeSlot(
 
   const dayBlocks = existingBlocks.filter(b => b.date === date);
 
-  if (preferredStartTime && /^\d{2}:\d{2}$/.test(preferredStartTime)) {
-    const startMins = toMinutes(preferredStartTime);
+  if (preferredStartTime && /^\d{1,2}:\d{2}$/.test(preferredStartTime.trim())) {
+    const clamped = clampTimeBlockEnd(preferredStartTime.trim(), clampDuration);
     return {
-      startTime: toHHMM(startMins),
-      endTime: toHHMM(startMins + clampDuration),
+      startTime: clamped.startTime,
+      endTime: clamped.endTime,
     };
   }
 
   // Candidate slots from 09:00 to 20:00 in 30-min increments
   for (let startMins = 9 * 60; startMins <= 20 * 60; startMins += 30) {
-    const endMins = startMins + clampDuration;
+    const candidateRange = clampTimeBlockEnd(toHHMM(startMins), clampDuration);
+    const candStart = toMinutes(candidateRange.startTime);
+    const candEnd = toMinutes(candidateRange.endTime);
     const hasOverlap = dayBlocks.some(b => {
       const bStart = toMinutes(b.startTime);
       const bEnd = toMinutes(b.endTime);
-      return startMins < bEnd && endMins > bStart;
+      return candStart < bEnd && candEnd > bStart;
     });
-    if (!hasOverlap) {
+    if (!hasOverlap && isValidSingleDayTimeRange(candidateRange.startTime, candidateRange.endTime)) {
       return {
-        startTime: toHHMM(startMins),
-        endTime: toHHMM(endMins),
+        startTime: candidateRange.startTime,
+        endTime: candidateRange.endTime,
       };
     }
   }
 
+  const fallback = clampTimeBlockEnd('09:00', clampDuration);
   return {
-    startTime: '09:00',
-    endTime: toHHMM(9 * 60 + clampDuration),
+    startTime: fallback.startTime,
+    endTime: fallback.endTime,
   };
 }
 

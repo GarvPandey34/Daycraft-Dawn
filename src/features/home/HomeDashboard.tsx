@@ -24,6 +24,7 @@ import {
 } from 'recharts';
 import { motion, AnimatePresence } from 'motion/react';
 import { db } from '../../database/db';
+import { Task } from '../../domain/models';
 import { formatLocalDate } from '../../services/streakService';
 import { useNotifications } from '../../notifications/NotificationContext';
 import { calculateLevel } from '../../services/gamificationService';
@@ -31,6 +32,26 @@ import { getSevenDayCompletionData } from '../../services/completionAnalyticsSer
 import { useMotionPreference } from '../../theme/motion';
 import { AnimatedCheckbox, EmptyStateMotion } from '../../components/MotionPrimitives';
 import { FRESH_START_EMPTY_STATES } from '../../services/tutorialService';
+
+export function getHomeDashboardTasks(tasks: Task[], todayStr: string) {
+  const scheduledPool = tasks.filter(t => !t.archived && t.status !== 'inbox');
+  const todayTasks = scheduledPool.filter(
+    t => t.dueDate === todayStr || (!t.dueDate && t.priority === 'urgent')
+  );
+  const completedTodayTasks = todayTasks.filter(t => t.status === 'completed');
+  const overdueTasks = scheduledPool.filter(
+    t => t.status !== 'completed' && Boolean(t.dueDate && t.dueDate < todayStr)
+  );
+  const todayCompletionPercent =
+    todayTasks.length > 0 ? Math.round((completedTodayTasks.length / todayTasks.length) * 100) : 0;
+
+  return {
+    todayTasks,
+    completedTodayTasks,
+    overdueTasks,
+    todayCompletionPercent,
+  };
+}
 
 interface HomeDashboardProps {
   onNavigate: (destination: string) => void;
@@ -84,12 +105,13 @@ export const HomeDashboard: React.FC<HomeDashboardProps> = ({ onNavigate, onOpen
   const levelInfo = calculateLevel(totalXp);
   const hasPersonalActivity = db.hasPersonalActivity();
 
-  // Today's priorities
-  const todayTasks = tasks.filter(t => t.dueDate === todayStr || (!t.dueDate && t.priority === 'urgent'));
-  const completedTodayTasks = todayTasks.filter(t => t.status === 'completed');
-  const overdueTasks = tasks.filter(t => t.status !== 'completed' && t.dueDate && t.dueDate < todayStr);
-  const todayCompletionPercent =
-    todayTasks.length > 0 ? Math.round((completedTodayTasks.length / todayTasks.length) * 100) : 0;
+  // Today's priorities (excluding unconfirmed Inbox captures)
+  const {
+    todayTasks,
+    completedTodayTasks,
+    overdueTasks,
+    todayCompletionPercent,
+  } = getHomeDashboardTasks(tasks, todayStr);
 
   // Today's habit completions
   const todayHabitOccs = occurrences.filter(o => o.date === todayStr);
