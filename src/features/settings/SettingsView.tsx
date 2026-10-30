@@ -24,7 +24,11 @@ import {
   Trash2,
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
-import { db, RESET_CONFIRMATION_PHRASE } from '../../database/db';
+import {
+  BackupRestorePreview,
+  db,
+  RESET_CONFIRMATION_PHRASE,
+} from '../../database/db';
 import { useTheme } from '../../theme/ThemeContext';
 import { getThemeUnlockStatus, THEME_PRESETS, ThemePresetKey } from '../../theme/tokens';
 import { useNotifications } from '../../notifications/NotificationContext';
@@ -102,6 +106,13 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onNavigate }) => {
   const [preserveThemeOnReset, setPreserveThemeOnReset] = useState(true);
   const [preserveTutorialOnReset, setPreserveTutorialOnReset] = useState(true);
   const [resetError, setResetError] = useState<string | null>(null);
+
+  // Safe Backup Restore confirmation & pre-restore safety snapshot state
+  const [pendingRestore, setPendingRestore] = useState<{
+    rawArchive: unknown;
+    preview: BackupRestorePreview;
+  } | null>(null);
+  const [safetyExportBtnState, setSafetyExportBtnState] = useState<ButtonStatusState>('idle');
 
   useEffect(() => {
     return db.subscribe(() => setTick(t => t + 1));
@@ -186,6 +197,31 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onNavigate }) => {
     setTimeout(() => setExportBtnState('idle'), 2200);
   };
 
+  const executeConfirmedRestore = (rawArchive: unknown) => {
+    const res = db.restoreArchive(rawArchive);
+    if (res.success) {
+      setPendingRestore(null);
+      setImportBtnState('success');
+      notify({
+        title: 'Backup Restored',
+        message: res.safetySnapshotCreated
+          ? 'All records restored. A pre-restore safety snapshot was saved automatically.'
+          : 'All records restored successfully.',
+        type: 'system',
+      });
+      flashSavedFeedback('Backup archive restored');
+      triggerCelebration();
+    } else {
+      setImportBtnState('error');
+      notify({
+        title: 'Restore Failed',
+        message: res.errors.join(', '),
+        type: 'system',
+      });
+    }
+    setTimeout(() => setImportBtnState('idle'), 2200);
+  };
+
   const handleImportBackup = async () => {
     setImportBtnState('loading');
     const text = await fileSystemAdapter.importBackupFile();
@@ -196,23 +232,26 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onNavigate }) => {
 
     try {
       const parsed = JSON.parse(text);
-      const res = db.restoreArchive(parsed);
-      if (res.success) {
-        setImportBtnState('success');
-        notify({
-          title: 'Backup Restored',
-          message: 'All records restored successfully.',
-          type: 'system',
-        });
-        triggerCelebration();
-      } else {
+      const preview = db.previewBackupRestore(parsed);
+      if (!preview.valid) {
         setImportBtnState('error');
         notify({
           title: 'Restore Failed',
-          message: res.errors.join(', '),
+          message: preview.errors.join(', '),
           type: 'system',
         });
+        setTimeout(() => setImportBtnState('idle'), 2200);
+        return;
       }
+
+      if (preview.requiresConfirmation) {
+        setIsResetConfirmOpen(false);
+        setPendingRestore({ rawArchive: parsed, preview });
+        setImportBtnState('idle');
+        return;
+      }
+
+      executeConfirmedRestore(parsed);
     } catch {
       setImportBtnState('error');
       notify({
@@ -220,8 +259,47 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onNavigate }) => {
         message: 'Could not parse JSON backup payload.',
         type: 'system',
       });
+      setTimeout(() => setImportBtnState('idle'), 2200);
     }
-    setTimeout(() => setImportBtnState('idle'), 2200);
+  };
+
+  const handleExportSafetyBackupBeforeRestore = async () => {
+    setSafetyExportBtnState('loading');
+    const dateStr = new Date().toISOString().split('T')[0];
+    const archive = db.exportArchive();
+    const ok = await fileSystemAdapter.exportBackupFile(
+      archive,
+      `daycraft-pre-restore-safety-${dateStr}.daycraft`
+    );
+    if (ok) {
+      setSafetyExportBtnState('success');
+      notify({
+        title: 'Safety Backup Exported',
+        message: 'Current local data saved before restore.',
+        type: 'system',
+      });
+    } else {
+      setSafetyExportBtnState('error');
+    }
+    setTimeout(() => setSafetyExportBtnState('idle'), 2200);
+  };
+
+  const handleUndoRestoreFromSafetySnapshot = () => {
+    const res = db.restoreFromSafetySnapshot();
+    if (res.success) {
+      notify({
+        title: 'Pre-Restore Data Recovered',
+        message: 'Restored workspace from the automatic pre-restore safety snapshot.',
+        type: 'system',
+      });
+      flashSavedFeedback('Recovered from safety snapshot');
+    } else {
+      notify({
+        title: 'Recovery Failed',
+        message: res.errors.join(', '),
+        type: 'system',
+      });
+    }
   };
 
   const handleTestNotification = async () => {
@@ -1213,10 +1291,21 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onNavigate }) => {
             Restore From File...
           </TactileButton>
 
+          {db.getPreRestoreSafetySnapshot() && !pendingRestore && (
+            <TactileButton
+              variant="subtle"
+              icon={<ShieldCheck className="w-4 h-4 text-emerald-600" />}
+              onClick={handleUndoRestoreFromSafetySnapshot}
+            >
+              Recover Pre-Restore Safety Snapshot
+            </TactileButton>
+          )}
+
           <TactileButton
             variant="danger"
             icon={<RotateCcw className="w-4 h-4" />}
             onClick={() => {
+              setPendingRestore(null);
               setIsResetConfirmOpen(prev => !prev);
               setResetConfirmationText('');
               setResetError(null);
@@ -1226,6 +1315,147 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onNavigate }) => {
             Reset Personal Data
           </TactileButton>
         </div>
+
+        <AnimatePresence>
+          {pendingRestore && (
+            <motion.div
+              initial={{ opacity: 0, y: -6 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -6 }}
+              role="region"
+              aria-label="Backup Restore Confirmation"
+              className="mt-4 p-5 rounded-2xl border space-y-4 bg-amber-500/5 border-amber-500/30"
+            >
+              <div className="flex items-start gap-3">
+                <AlertCircle className="w-5 h-5 text-amber-500 shrink-0 mt-0.5" />
+                <div className="space-y-1.5 text-xs flex-1">
+                  <h4 className="font-bold text-sm text-amber-700 dark:text-amber-400">
+                    Confirm Backup Restore — Existing Personal Data Detected
+                  </h4>
+                  <p style={{ color: 'var(--text-primary)' }}>
+                    Restoring this verified backup archive will replace your current on-device records. Daycraft will automatically save an internal pre-restore safety snapshot before applying changes, and you can also export a safety backup file right now.
+                  </p>
+                  {pendingRestore.preview.manifest && (
+                    <div
+                      className="flex flex-wrap gap-x-4 gap-y-1 pt-1 text-[11px] font-mono"
+                      style={{ color: 'var(--text-secondary)' }}
+                    >
+                      <span>Archive: {pendingRestore.preview.manifest.appName}</span>
+                      <span>
+                        Created:{' '}
+                        {new Date(pendingRestore.preview.manifest.createdAt).toLocaleString()}
+                      </span>
+                      <span>Checksum: {pendingRestore.preview.manifest.checksum} ✓</span>
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              <div
+                className="grid grid-cols-2 sm:grid-cols-4 gap-2.5 p-3.5 rounded-xl border text-xs"
+                style={{
+                  backgroundColor: 'var(--bg-surface)',
+                  borderColor: 'var(--border)',
+                }}
+              >
+                {[
+                  {
+                    label: 'Tasks',
+                    existing: pendingRestore.preview.existingCounts.tasks,
+                    incoming: pendingRestore.preview.incomingCounts.tasks,
+                  },
+                  {
+                    label: 'Habits',
+                    existing: pendingRestore.preview.existingCounts.habits,
+                    incoming: pendingRestore.preview.incomingCounts.habits,
+                  },
+                  {
+                    label: 'Goals',
+                    existing: pendingRestore.preview.existingCounts.goals,
+                    incoming: pendingRestore.preview.incomingCounts.goals,
+                  },
+                  {
+                    label: 'Projects',
+                    existing: pendingRestore.preview.existingCounts.projects,
+                    incoming: pendingRestore.preview.incomingCounts.projects,
+                  },
+                  {
+                    label: 'Journal Entries',
+                    existing: pendingRestore.preview.existingCounts.journalEntries,
+                    incoming: pendingRestore.preview.incomingCounts.journalEntries,
+                  },
+                  {
+                    label: 'Focus Sessions',
+                    existing: pendingRestore.preview.existingCounts.focusSessions,
+                    incoming: pendingRestore.preview.incomingCounts.focusSessions,
+                  },
+                  {
+                    label: 'Total XP',
+                    existing: pendingRestore.preview.existingCounts.totalXp,
+                    incoming: pendingRestore.preview.incomingCounts.totalXp,
+                  },
+                ].map(item => (
+                  <div
+                    key={item.label}
+                    className="p-2 rounded-lg border"
+                    style={{
+                      backgroundColor: 'var(--bg-surface-subtle)',
+                      borderColor: 'var(--border)',
+                    }}
+                  >
+                    <div
+                      className="text-[10px] font-semibold uppercase tracking-wider"
+                      style={{ color: 'var(--text-muted)' }}
+                    >
+                      {item.label}
+                    </div>
+                    <div className="mt-1 flex items-baseline gap-1.5 font-mono text-xs">
+                      <span style={{ color: 'var(--text-secondary)' }}>
+                        Current: <strong>{item.existing}</strong>
+                      </span>
+                      <span style={{ color: 'var(--text-muted)' }}>→</span>
+                      <span style={{ color: 'var(--accent)' }}>
+                        Backup: <strong>{item.incoming}</strong>
+                      </span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+
+              <div className="flex flex-wrap items-center gap-2.5 pt-1">
+                <TactileButton
+                  type="button"
+                  variant="secondary"
+                  statusState={safetyExportBtnState}
+                  loadingLabel="Saving Safety Backup..."
+                  successLabel="Safety Backup Saved"
+                  errorLabel="Export Failed"
+                  icon={<Download className="w-3.5 h-3.5 text-emerald-600" />}
+                  onClick={handleExportSafetyBackupBeforeRestore}
+                >
+                  Export Current Data First (.daycraft)
+                </TactileButton>
+
+                <TactileButton
+                  type="button"
+                  variant="primary"
+                  icon={<Check className="w-3.5 h-3.5" />}
+                  onClick={() => executeConfirmedRestore(pendingRestore.rawArchive)}
+                >
+                  Confirm &amp; Replace Local Data
+                </TactileButton>
+
+                <TactileButton
+                  type="button"
+                  variant="subtle"
+                  onClick={() => setPendingRestore(null)}
+                >
+                  Cancel
+                </TactileButton>
+              </div>
+            </motion.div>
+          )}
+        </AnimatePresence>
 
         <AnimatePresence>
           {isResetConfirmOpen && (

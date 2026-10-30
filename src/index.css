@@ -155,3 +155,28 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
   background-color: var(--accent-subtle);
   color: var(--accent);
 }
+
+/* Native Mobile Safe-Area Insets & Touch Ergonomics */
+.safe-area-top {
+  padding-top: max(0.625rem, env(safe-area-inset-top, 0px));
+}
+
+.safe-area-bottom {
+  padding-bottom: max(0.5rem, env(safe-area-inset-bottom, 0px));
+}
+
+.safe-area-main-pb {
+  padding-bottom: calc(5rem + env(safe-area-inset-bottom, 0px));
+}
+
+@media (min-width: 768px) {
+  .safe-area-main-pb {
+    padding-bottom: 1.5rem;
+  }
+}
+
+button, a, [role="button"], input, select, textarea {
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+}
+

@@ -29,6 +29,11 @@ import {
 } from './navigationState';
 import { getBackupReminderStatus } from '../services/workflowConnectService';
 import { fileSystemAdapter } from '../platform/adapters';
+import { requestPersistentStorage } from '../platform/platformDetect';
+import {
+  registerAppLifecycleListeners,
+  registerHardwareBackButton,
+} from '../platform/lifecycleAdapter';
 import { useNotifications } from '../notifications/NotificationContext';
 import { reconcileExpiredFocusTimer } from '../services/focusTimerStateService';
 import { soundService } from '../services/soundService';
@@ -74,6 +79,7 @@ export const AppShell: React.FC = () => {
   const [isSearchOpen, setIsSearchOpen] = useState(false);
   const [isLocked, setIsLocked] = useState(false);
   const [mobileDrawerOpen, setMobileDrawerOpen] = useState(false);
+  const [isMobileKeyboardOpen, setIsMobileKeyboardOpen] = useState(false);
   const [isTabletViewport, setIsTabletViewport] = useState<boolean>(() =>
     typeof window !== 'undefined' ? window.innerWidth >= 768 && window.innerWidth < 1024 : false
   );
@@ -81,6 +87,23 @@ export const AppShell: React.FC = () => {
   const [, setTick] = useState(0);
   const lastNonTutorialDestRef = useRef<Destination>('home');
   const mobileMenuTriggerRef = useRef<HTMLButtonElement | null>(null);
+  const uiStateRef = useRef({
+    isLocked: false,
+    isQuickAddOpen: false,
+    isSearchOpen: false,
+    mobileDrawerOpen: false,
+    currentDestination: 'home' as Destination,
+  });
+
+  useEffect(() => {
+    uiStateRef.current = {
+      isLocked,
+      isQuickAddOpen,
+      isSearchOpen,
+      mobileDrawerOpen,
+      currentDestination,
+    };
+  }, [isLocked, isQuickAddOpen, isSearchOpen, mobileDrawerOpen, currentDestination]);
 
   const effectiveSidebarCollapsed = isTabletViewport
     ? tabletManualOverride ?? true
@@ -100,8 +123,10 @@ export const AppShell: React.FC = () => {
     }
   }, [currentDestination]);
 
-  // Global focus timer expiration watcher so sessions complete reliably even when viewing other screens
+  // Global focus timer expiration & native lifecycle watcher
   useEffect(() => {
+    void requestPersistentStorage();
+
     const checkExpiredTimer = () => {
       reconcileExpiredFocusTimer({
         database: db,
@@ -121,20 +146,67 @@ export const AppShell: React.FC = () => {
 
     checkExpiredTimer();
     const interval = setInterval(checkExpiredTimer, 500);
-    const handleVisibilityOrFocus = () => {
-      if (typeof document === 'undefined' || document.visibilityState === 'visible') {
+    const unsubLifecycle = registerAppLifecycleListeners({
+      onResume: () => {
         checkExpiredTimer();
-      }
-    };
-    window.addEventListener('focus', handleVisibilityOrFocus);
-    document.addEventListener('visibilitychange', handleVisibilityOrFocus);
+        void soundService.reconcileAudioLifecycle();
+      },
+    });
 
     return () => {
       clearInterval(interval);
-      window.removeEventListener('focus', handleVisibilityOrFocus);
-      document.removeEventListener('visibilitychange', handleVisibilityOrFocus);
+      unsubLifecycle();
     };
   }, [notify, triggerCelebration]);
+
+  // Android hardware back-button priority handler & mobile virtual keyboard awareness
+  useEffect(() => {
+    const unsubBackButton = registerHardwareBackButton({
+      getState: () => uiStateRef.current,
+      closeQuickAdd: () => setIsQuickAddOpen(false),
+      closeSearch: () => setIsSearchOpen(false),
+      closeMobileDrawer: () => setMobileDrawerOpen(false),
+      navigateHome: () => setNavigationView('home'),
+    });
+
+    const handleFocusIn = (e: FocusEvent) => {
+      if (typeof window === 'undefined' || window.innerWidth >= 768) return;
+      const target = e.target as HTMLElement | null;
+      if (
+        target instanceof HTMLInputElement ||
+        target instanceof HTMLTextAreaElement ||
+        Boolean(target?.isContentEditable)
+      ) {
+        const type = target instanceof HTMLInputElement ? target.type : 'text';
+        if (!['checkbox', 'radio', 'button', 'range', 'file'].includes(type)) {
+          setIsMobileKeyboardOpen(true);
+        }
+      }
+    };
+
+    const handleFocusOut = () => {
+      setTimeout(() => {
+        if (typeof document === 'undefined') return;
+        const active = document.activeElement as HTMLElement | null;
+        const stillEditing =
+          active instanceof HTMLInputElement ||
+          active instanceof HTMLTextAreaElement ||
+          Boolean(active?.isContentEditable);
+        if (!stillEditing) {
+          setIsMobileKeyboardOpen(false);
+        }
+      }, 100);
+    };
+
+    window.addEventListener('focusin', handleFocusIn);
+    window.addEventListener('focusout', handleFocusOut);
+
+    return () => {
+      unsubBackButton();
+      window.removeEventListener('focusin', handleFocusIn);
+      window.removeEventListener('focusout', handleFocusOut);
+    };
+  }, [setNavigationView]);
 
   // Responsive viewport listener: close mobile drawer when resizing >= 768px & track tablet range
   useEffect(() => {
@@ -353,7 +425,7 @@ export const AppShell: React.FC = () => {
 
       {/* Mobile Top Header (Small Screens < 768px) */}
       <header
-        className="md:hidden flex items-center justify-between gap-2 px-3.5 py-2.5 border-b sticky top-0 z-30 backdrop-blur-md"
+        className="md:hidden flex items-center justify-between gap-2 px-3.5 py-2.5 safe-area-top border-b sticky top-0 z-30 backdrop-blur-md"
         style={{
           backgroundColor: 'var(--bg-surface-elevated)',
           borderColor: 'var(--border)',
@@ -480,7 +552,7 @@ export const AppShell: React.FC = () => {
       />
 
       {/* Main Content Area with Smooth Page Transition */}
-      <main className="flex-1 min-w-0 pb-20 md:pb-6 overflow-y-auto overflow-x-hidden focus:outline-none">
+      <main className="flex-1 min-w-0 safe-area-main-pb overflow-y-auto overflow-x-hidden focus:outline-none">
         <AnimatePresence mode="wait">
           <motion.div
             key={currentDestination}
@@ -498,7 +570,9 @@ export const AppShell: React.FC = () => {
       {/* Mobile Bottom Navigation Bar */}
       <nav
         aria-label="Mobile Navigation"
-        className="md:hidden fixed bottom-0 left-0 right-0 z-30 border-t flex justify-around items-center py-2 px-1 backdrop-blur-md"
+        className={`md:hidden fixed bottom-0 left-0 right-0 z-30 border-t flex justify-around items-center pt-2 px-1 safe-area-bottom backdrop-blur-md transition-transform duration-200 ${
+          isMobileKeyboardOpen ? 'translate-y-full pointer-events-none' : 'translate-y-0'
+        }`}
         style={{
           backgroundColor: 'var(--bg-surface-elevated)',
           borderColor: 'var(--border)',

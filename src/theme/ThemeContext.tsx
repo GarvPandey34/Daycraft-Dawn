@@ -8,6 +8,7 @@ import {
   ThemeMode,
   ThemePresetKey,
 } from './tokens';
+import { syncNativeStatusBar } from '../platform/lifecycleAdapter';
 
 interface ThemeContextType {
   presetKey: ThemePresetKey;
@@ -117,6 +118,7 @@ export const ThemeProvider: React.FC<{ children: React.ReactNode }> = ({ childre
 
     document.body.style.backgroundColor = colors.bgApp;
     document.body.style.color = colors.textPrimary;
+    void syncNativeStatusBar(resolvedMode, colors.bgApp);
   }, [colors, resolvedMode, safePresetKey]);
 
   const isThemeEligible = (key: ThemePresetKey): boolean => {

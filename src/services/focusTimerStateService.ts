@@ -7,8 +7,10 @@
 import { DeviceFocusMode, FocusSession } from '../domain/models';
 import { DatabaseManager, db } from '../database/db';
 import { formatLocalDate } from './streakService';
+import { notificationAdapter } from '../platform/adapters';
 
 const FOCUS_TIMER_STORAGE_KEY = 'daycraft_active_focus_timer_v1';
+export const FOCUS_TIMER_NOTIFICATION_ID = 'daycraft_focus_timer_due';
 
 export interface FocusTimerPersistentState {
   sessionId: string;
@@ -51,8 +53,54 @@ export interface ReconcileFocusTimerOptions {
 }
 
 let inMemoryTimerState: FocusTimerPersistentState | null = null;
+let lastScheduledNotificationKey: string | null = null;
 const finalizedFocusSessionIds = new Set<string>();
 const completionListeners = new Set<(result: FocusTimerCompletionResult) => void>();
+
+/**
+ * Synchronizes the scheduled native/OS notification with the current timer state.
+ * Schedules once per (sessionId, targetEndTime) when active, and cancels when paused, reset, or completed.
+ */
+export function syncFocusTimerNativeNotification(state: FocusTimerPersistentState | null): void {
+  if (
+    state &&
+    state.isActive &&
+    !state.isPaused &&
+    typeof state.targetEndTime === 'number' &&
+    state.targetEndTime > Date.now()
+  ) {
+    const scheduleKey = `${state.sessionId}:${state.targetEndTime}`;
+    if (lastScheduledNotificationKey !== scheduleKey) {
+      lastScheduledNotificationKey = scheduleKey;
+      const isFocus = state.sessionType === 'focus';
+      void notificationAdapter
+        .scheduleNotification({
+          id: FOCUS_TIMER_NOTIFICATION_ID,
+          title: isFocus ? 'Focus Sprint Completed!' : 'Break Finished',
+          body: isFocus
+            ? `Finished ${state.durationMinutes}-minute focus sprint${state.sessionTaskNote ? `: ${state.sessionTaskNote}` : ''}.`
+            : 'Recharged and ready to focus?',
+          triggerDate: new Date(state.targetEndTime),
+          channelId: 'daycraft_focus',
+        })
+        .catch(() => {
+          // Never block timer execution if notifications are unavailable or denied
+        });
+    }
+    return;
+  }
+
+  if (lastScheduledNotificationKey !== null) {
+    lastScheduledNotificationKey = null;
+    void notificationAdapter.cancelNotification(FOCUS_TIMER_NOTIFICATION_ID).catch(() => {
+      // Ignore cancellation errors
+    });
+  }
+}
+
+export function getLastScheduledFocusNotificationKey(): string | null {
+  return lastScheduledNotificationKey;
+}
 
 export function subscribeFocusTimerCompletion(
   listener: (result: FocusTimerCompletionResult) => void
@@ -120,6 +168,7 @@ export function saveFocusTimerState(state: FocusTimerPersistentState): void {
       // Ignore storage quota errors
     }
   }
+  syncFocusTimerNativeNotification(inMemoryTimerState);
 }
 
 export function loadRawFocusTimerState(): FocusTimerPersistentState | null {
@@ -173,6 +222,7 @@ export function clearFocusTimerState(): void {
       // Ignore storage errors
     }
   }
+  syncFocusTimerNativeNotification(null);
 }
 
 /**

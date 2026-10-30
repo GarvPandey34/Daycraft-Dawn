@@ -5,6 +5,8 @@ import {defineConfig} from 'vite';
 
 export default defineConfig(() => {
   return {
+    clearScreen: false,
+    envPrefix: ['VITE_', 'TAURI_ENV_'],
     plugins: [react(), tailwindcss()],
     resolve: {
       alias: {
@@ -12,6 +14,8 @@ export default defineConfig(() => {
       },
     },
     server: {
+      port: 3000,
+      strictPort: true,
       // HMR is disabled in AI Studio via DISABLE_HMR env var.
       // Do not modify—file watching is disabled to prevent flickering during agent edits.
       hmr: process.env.DISABLE_HMR !== 'true',
@@ -20,3 +24,4 @@ export default defineConfig(() => {
     },
   };
 });
+

@@ -2,8 +2,10 @@ export interface CapacitorConfig {
   appId: string;
   appName: string;
   webDir: string;
+  bundledWebRuntime?: boolean;
   server?: {
     androidScheme?: string;
+    cleartext?: boolean;
   };
   plugins?: Record<string, unknown>;
 }
@@ -17,13 +19,12 @@ const config: CapacitorConfig = {
   },
   plugins: {
     LocalNotifications: {
-      smallIcon: 'ic_stat_icon_config_sample',
       iconColor: '#C86D51',
-      sound: 'beep.wav',
     },
-    CapacitorSQLite: {
-      iosDatabaseLocation: 'Library/CapacitorDatabase',
-      androidIsEncryption: false,
+    StatusBar: {
+      overlaysWebView: false,
+      style: 'LIGHT',
+      backgroundColor: '#F8F6F0',
     },
   },
 };

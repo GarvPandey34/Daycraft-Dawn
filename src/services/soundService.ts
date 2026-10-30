@@ -422,6 +422,33 @@ class SoundEngine {
     return this.activeTracks.size;
   }
 
+  getContextState(): AudioContextState | 'uninitialized' {
+    return this.ctx ? this.ctx.state : 'uninitialized';
+  }
+
+  /**
+   * Reconciles Web Audio API context state after Android/Windows/Browser backgrounding.
+   * If tracks were active before background suspension, attempts to resume the AudioContext
+   * and notifies UI subscribers so mixer controls reflect accurate playback state.
+   */
+  async reconcileAudioLifecycle(): Promise<boolean> {
+    if (!this.ctx) {
+      return false;
+    }
+    try {
+      if (this.activeTracks.size > 0 && !this.isMasterMuted && this.ctx.state === 'suspended') {
+        await this.ctx.resume();
+        this.notifyListeners();
+        return (this.ctx.state as AudioContextState) === 'running';
+      }
+      this.notifyListeners();
+      return this.ctx.state === 'running';
+    } catch {
+      this.notifyListeners();
+      return false;
+    }
+  }
+
   /**
    * Retrieves real-time frequency and RMS amplitude data directly from the Web Audio graph.
    * If audio is muted, paused, or no tracks are playing, returns isPlaying: false with zeros.

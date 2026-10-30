@@ -54,8 +54,33 @@ import { DEFAULT_WELLNESS_TRACKERS, getInitialSeedData } from './initialSeed';
 import { tutorialManager } from '../services/tutorialService';
 
 const DB_STORAGE_KEY = 'daycraft_database_v1';
+export const PRE_RESTORE_SNAPSHOT_KEY = 'daycraft_pre_restore_snapshot_v1';
 const SCHEMA_VERSION = 1;
 export const RESET_CONFIRMATION_PHRASE = 'RESET';
+
+export interface BackupRestoreCounts {
+  tasks: number;
+  habits: number;
+  goals: number;
+  projects: number;
+  journalEntries: number;
+  focusSessions: number;
+  totalXp: number;
+}
+
+export interface BackupRestorePreview {
+  valid: boolean;
+  errors: string[];
+  requiresConfirmation: boolean;
+  manifest?: {
+    appName: string;
+    createdAt: string;
+    schemaVersion: number;
+    checksum: string;
+  };
+  existingCounts: BackupRestoreCounts;
+  incomingCounts: BackupRestoreCounts;
+}
 
 export interface ResetPersonalDataOptions {
   confirmed: boolean;
@@ -559,14 +584,138 @@ export class DatabaseManager {
     };
   }
 
+  private lastPreRestoreSnapshot: DaycraftBackupArchive | null = null;
+
   exportArchive(): DaycraftBackupArchive {
     return createBackupArchive(this.settings.appName || 'Daycraft', this.getSnapshot(), this.schemaVersion);
   }
 
-  restoreArchive(rawArchive: unknown): { success: boolean; errors: string[] } {
+  getRecordCountsSummary(): BackupRestoreCounts {
+    return {
+      tasks: this.tasks.length,
+      habits: this.habits.length,
+      goals: this.goals.length,
+      projects: this.projects.length,
+      journalEntries: this.journalEntries.length,
+      focusSessions: this.focusSessions.length,
+      totalXp: this.getTotalXp(),
+    };
+  }
+
+  previewBackupRestore(rawArchive: unknown): BackupRestorePreview {
+    const existingCounts = this.getRecordCountsSummary();
+    const emptyCounts: BackupRestoreCounts = {
+      tasks: 0,
+      habits: 0,
+      goals: 0,
+      projects: 0,
+      journalEntries: 0,
+      focusSessions: 0,
+      totalXp: 0,
+    };
+
+    const validation = validateBackupArchive(rawArchive);
+    if (!validation.valid || !validation.data || !validation.manifest) {
+      return {
+        valid: false,
+        errors: validation.errors,
+        requiresConfirmation: false,
+        existingCounts,
+        incomingCounts: emptyCounts,
+      };
+    }
+
+    const d = validation.data;
+    const incomingTotalXp = Array.isArray(d.xpLedger)
+      ? d.xpLedger.reduce((sum, entry) => sum + (typeof entry?.xp === 'number' ? entry.xp : 0), 0)
+      : 0;
+
+    return {
+      valid: true,
+      errors: [],
+      requiresConfirmation: this.hasPersonalActivity(),
+      manifest: {
+        appName: validation.manifest.appName,
+        createdAt: validation.manifest.createdAt,
+        schemaVersion: validation.manifest.schemaVersion,
+        checksum: validation.manifest.checksum,
+      },
+      existingCounts,
+      incomingCounts: {
+        tasks: Array.isArray(d.tasks) ? d.tasks.length : 0,
+        habits: Array.isArray(d.habits) ? d.habits.length : 0,
+        goals: Array.isArray(d.goals) ? d.goals.length : 0,
+        projects: Array.isArray(d.projects) ? d.projects.length : 0,
+        journalEntries: Array.isArray(d.journalEntries) ? d.journalEntries.length : 0,
+        focusSessions: Array.isArray(d.focusSessions) ? d.focusSessions.length : 0,
+        totalXp: incomingTotalXp,
+      },
+    };
+  }
+
+  savePreRestoreSafetySnapshot(): DaycraftBackupArchive | null {
+    try {
+      const archive = this.exportArchive();
+      this.lastPreRestoreSnapshot = archive;
+      if (typeof window !== 'undefined' && window.localStorage) {
+        try {
+          window.localStorage.setItem(PRE_RESTORE_SNAPSHOT_KEY, JSON.stringify(archive));
+        } catch {
+          // Ignore storage quota errors while keeping in-memory safety snapshot
+        }
+      }
+      return archive;
+    } catch {
+      return null;
+    }
+  }
+
+  getPreRestoreSafetySnapshot(): DaycraftBackupArchive | null {
+    if (this.lastPreRestoreSnapshot) {
+      return this.lastPreRestoreSnapshot;
+    }
+    if (typeof window !== 'undefined' && window.localStorage) {
+      try {
+        const raw = window.localStorage.getItem(PRE_RESTORE_SNAPSHOT_KEY);
+        if (raw) {
+          const parsed = JSON.parse(raw);
+          const validation = validateBackupArchive(parsed);
+          if (validation.valid) {
+            this.lastPreRestoreSnapshot = parsed as DaycraftBackupArchive;
+            return this.lastPreRestoreSnapshot;
+          }
+        }
+      } catch {
+        // Ignore parse errors
+      }
+    }
+    return null;
+  }
+
+  restoreFromSafetySnapshot(): { success: boolean; errors: string[] } {
+    const snapshot = this.getPreRestoreSafetySnapshot();
+    if (!snapshot) {
+      return {
+        success: false,
+        errors: ['No pre-restore safety snapshot is available.'],
+      };
+    }
+    return this.restoreArchive(snapshot, { skipSafetySnapshot: true });
+  }
+
+  restoreArchive(
+    rawArchive: unknown,
+    options?: { skipSafetySnapshot?: boolean }
+  ): { success: boolean; errors: string[]; safetySnapshotCreated?: boolean } {
     const validation = validateBackupArchive(rawArchive);
     if (!validation.valid || !validation.data) {
-      return { success: false, errors: validation.errors };
+      return { success: false, errors: validation.errors, safetySnapshotCreated: false };
+    }
+
+    let safetySnapshotCreated = false;
+    if (!options?.skipSafetySnapshot && this.hasPersonalActivity()) {
+      const savedSafety = this.savePreRestoreSafetySnapshot();
+      safetySnapshotCreated = Boolean(savedSafety);
     }
 
     const d = validation.data;
@@ -607,7 +756,7 @@ export class DatabaseManager {
     }
 
     this.persist();
-    return { success: true, errors: [] };
+    return { success: true, errors: [], safetySnapshotCreated };
   }
 
   hasPersonalActivity(): boolean {

@@ -52,6 +52,7 @@ import { useMotionPreference, MOTION_SPRINGS } from '../../theme/motion';
 import { AudioVisualizer } from './AudioVisualizer';
 import { AnimatedCheckbox, EmptyStateMotion } from '../../components/MotionPrimitives';
 import { formatLocalDate } from '../../services/streakService';
+import { notificationAdapter } from '../../platform/adapters';
 import {
   clearFocusTimerState,
   createNewFocusSessionId,
@@ -298,6 +299,16 @@ export const FocusTimerView: React.FC = () => {
     setIsActive(true);
     setIsPaused(false);
     soundService.playClick(settings.soundVolume);
+
+    if (settings.notificationsEnabled !== false) {
+      void notificationAdapter.hasPermission().then(granted => {
+        if (!granted) {
+          void notificationAdapter.requestPermission().catch(() => {
+            // Timer remains 100% functional if permission is denied
+          });
+        }
+      });
+    }
   };
 
   const handleConfirmDeviceMode = async (mode: DeviceFocusMode | null) => {
